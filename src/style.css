@@ -1,0 +1,280 @@
+:root {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card2: #334155;
+  --txt: #e2e8f0;
+  --muted: #94a3b8;
+  --verde: #22c55e;
+  --vermelho: #ef4444;
+  --accent: #38bdf8;
+  color-scheme: dark;
+}
+
+[x-cloak] {
+  display: none !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--txt);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-top: env(safe-area-inset-top);
+}
+
+main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.status,
+.aviso {
+  text-align: center;
+  padding: 24px;
+  color: var(--muted);
+}
+.aviso {
+  background: #422006;
+  color: #fbbf24;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+}
+.erro {
+  color: var(--vermelho);
+}
+
+.mes-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.mes-nav h1 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+.mes-nav button {
+  background: var(--card);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  font-size: 1.3rem;
+  cursor: pointer;
+}
+
+.painel {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.painel div {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+.painel span {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.painel strong {
+  font-size: 0.95rem;
+}
+
+/* ---- config ---- */
+.config-toggle {
+  width: 100%;
+  background: var(--card);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.config {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.campo > span {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.config input {
+  background: var(--card2);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 1rem;
+  min-width: 0;
+}
+.fixos .titulo {
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 6px;
+}
+.fixo-linha {
+  display: grid;
+  grid-template-columns: 1fr 110px 32px;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.fixo-valor {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.fixos .vazio {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 4px 0;
+}
+.fixo-linha .del,
+.fixo-linha .add {
+  background: var(--card2);
+  border: none;
+  color: var(--muted);
+  border-radius: 8px;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+.fixo-linha .add {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---- backup ---- */
+.backup .titulo {
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 6px;
+}
+.backup-botoes {
+  display: flex;
+  gap: 8px;
+}
+.backup .btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--card2);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: center;
+}
+.backup-msg {
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin: 8px 0 0;
+}
+
+/* ---- planilha ---- */
+.tabela-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--card);
+}
+.planilha {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+.planilha th,
+.planilha td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--card2);
+  text-align: right;
+  white-space: nowrap;
+}
+.planilha thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  z-index: 1;
+}
+.planilha .c-dia {
+  text-align: center;
+  color: var(--muted);
+  width: 36px;
+}
+.planilha .c-data {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.planilha tr.hoje td {
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+}
+.planilha tr.hoje .c-dia {
+  color: var(--accent);
+  font-weight: 700;
+}
+.celula {
+  width: 88px;
+  background: transparent;
+  border: none;
+  color: var(--txt);
+  text-align: right;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 2px;
+  border-radius: 6px;
+}
+.celula:focus {
+  outline: none;
+  background: var(--card2);
+}
+.celula.saida {
+  color: var(--vermelho);
+}
+.celula.entrada {
+  color: var(--verde);
+}
+.celula::placeholder {
+  color: var(--muted);
+  opacity: 0.5;
+}
+.planilha .saldo {
+  font-weight: 600;
+}
+.planilha .saldo.verde {
+  color: var(--verde);
+}
+.planilha .saldo.vermelho {
+  color: var(--vermelho);
+}

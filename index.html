@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <title>Controle de Gastos</title>
+</head>
+
+<body>
+  <div id="app" x-data="app" x-cloak>
+    <!-- Estados de carregamento -->
+    <template x-if="store.estado === 'carregando'">
+      <p class="status">Carregando…</p>
+    </template>
+    <template x-if="store.estado === 'erro'">
+      <p class="status erro">Falha ao carregar os dados.</p>
+    </template>
+
+    <template x-if="store.estado === 'pronto'">
+      <main>
+        <!-- Aviso de recuperação -->
+        <template x-if="store.origem === 'ultimaBoa'">
+          <p class="aviso">⚠️ Dados atuais estavam corrompidos — recuperada a última revisão boa.</p>
+        </template>
+
+        <!-- Navegação de mês -->
+        <header class="mes-nav">
+          <button @click="mudarMes(-1)" aria-label="Mês anterior">‹</button>
+          <h1 x-text="mesLabel"></h1>
+          <button @click="mudarMes(1)" aria-label="Próximo mês">›</button>
+        </header>
+
+        <!-- Mini-painel -->
+        <section class="painel">
+          <div><span>Salário</span><strong x-text="rendaFmt"></strong></div>
+          <div><span>Fixos</span><strong x-text="fixosFmt"></strong></div>
+          <div><span>Custo/dia</span><strong x-text="custoDiarioFmt"></strong></div>
+          <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
+        </section>
+
+        <!-- Botão de config -->
+        <button class="config-toggle" @click="configAberta = !configAberta">
+          <span x-text="configAberta ? '▾ Fechar configuração' : '⚙︎ Salário e custos fixos'"></span>
+        </button>
+
+        <!-- Painel de config -->
+        <section class="config" x-show="configAberta" x-cloak>
+          <label class="campo">
+            <span>Salário do mês</span>
+            <input type="text" inputmode="decimal" placeholder="0,00" :value="plain(rendaMes())"
+              @change="editarRenda($event.target.value)" />
+          </label>
+
+          <div class="fixos">
+            <span class="titulo">Custos fixos</span>
+            <template x-for="f in custosFixos" :key="f.id">
+              <div class="fixo-linha">
+                <input type="text" class="fixo-nome" :value="f.nome"
+                  @change="editarFixoNome(f.id, $event.target.value)" />
+                <input type="text" inputmode="decimal" class="fixo-valor" :value="plain(f.valorCentavos)"
+                  @change="editarFixoValor(f.id, $event.target.value)" />
+                <button class="del" @click="removerFixo(f.id)" aria-label="Remover">×</button>
+              </div>
+            </template>
+            <template x-if="custosFixos.length === 0">
+              <p class="vazio">Nenhum custo fixo ainda.</p>
+            </template>
+
+            <!-- Adicionar fixo -->
+            <div class="fixo-linha novo">
+              <input type="text" class="fixo-nome" placeholder="nome" x-model="novoFixo.nome" />
+              <input type="text" inputmode="decimal" class="fixo-valor" placeholder="0,00" x-model="novoFixo.valor"
+                @keydown.enter="addFixo()" />
+              <button class="add" @click="addFixo()" aria-label="Adicionar">+</button>
+            </div>
+          </div>
+
+          <!-- Backup: exportar / importar JSON -->
+          <div class="backup">
+            <span class="titulo">Backup</span>
+            <div class="backup-botoes">
+              <button class="btn" @click="exportar()">⬇︎ Exportar JSON</button>
+              <label class="btn">
+                ⬆︎ Importar JSON
+                <input type="file" accept="application/json,.json" @change="importar($event)" hidden />
+              </label>
+            </div>
+            <p class="backup-msg" x-show="mensagemBackup" x-text="mensagemBackup"></p>
+          </div>
+        </section>
+
+        <!-- Aviso: custos fixos ≥ renda (sobra ≤ 0) -->
+        <template x-if="fixosMaioresQueRenda">
+          <p class="aviso">⚠️ Custos fixos ≥ salário: sem sobra pra gastar. Ajuste salário ou fixos.</p>
+        </template>
+
+        <!-- Planilha diária -->
+        <div class="tabela-wrap">
+          <table class="planilha">
+            <thead>
+              <tr>
+                <th class="c-dia">Dia</th>
+                <th class="c-data">Data</th>
+                <th class="c-num">Saída</th>
+                <th class="c-num">Entrada</th>
+                <th class="c-num">Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="d in dias" :key="d.data">
+                <tr :class="{ hoje: ehHoje(d.data) }">
+                  <td class="c-dia" x-text="d.dia"></td>
+                  <td class="c-data" x-text="diaMes(d.data)"></td>
+                  <td class="c-num">
+                    <input type="text" inputmode="decimal" class="celula saida" placeholder="—"
+                      :value="valorCelula(d, 'saida')" @change="editarCelula(d, 'saida', $event.target.value)" />
+                  </td>
+                  <td class="c-num">
+                    <input type="text" inputmode="decimal" class="celula entrada" placeholder="—"
+                      :value="valorCelula(d, 'entrada')" @change="editarCelula(d, 'entrada', $event.target.value)" />
+                  </td>
+                  <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </template>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

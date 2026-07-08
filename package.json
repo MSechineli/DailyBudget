@@ -1,0 +1,32 @@
+{
+  "name": "app-financeiro",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cap:sync": "npm run build && cap sync",
+    "android:open": "cap open android",
+    "android:build": "npm run build && cap sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "alpinejs": "^3.14.9",
+    "idb-keyval": "^6.2.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
+    "@types/alpinejs": "^3.13.11",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11",
+    "vite-plugin-pwa": "^0.21.1",
+    "vitest": "^3.2.7"
+  }
+}
