@@ -34,13 +34,48 @@
           <button @click="mudarMes(1)" aria-label="Próximo mês">›</button>
         </header>
 
+        <!-- Destaque: quanto posso gastar -->
+        <section class="destaque">
+          <div class="destaque-hoje">
+            <span>Posso gastar hoje</span>
+            <strong :class="{ negativo: disponivelHojeVermelho }" x-text="disponivelHojeFmt"></strong>
+          </div>
+          <div class="destaque-sub">
+            <div><span>Por dia</span><strong x-text="custoDiarioFmt"></strong></div>
+            <div><span>Por semana</span><strong x-text="porSemanaFmt"></strong></div>
+          </div>
+        </section>
+
+        <!-- Gráfico do saldo no mês -->
+        <template x-if="grafico">
+          <section class="grafico-wrap">
+            <svg class="grafico" :viewBox="`0 0 ${grafico.w} ${grafico.h}`" preserveAspectRatio="none"
+              role="img" aria-label="Saldo ao longo do mês">
+              <defs>
+                <linearGradient id="gradSaldo" x1="0" y1="0" x2="0" :y2="grafico.h"
+                  gradientUnits="userSpaceOnUse">
+                  <stop offset="0" class="stop-verde"></stop>
+                  <stop :offset="grafico.zeroFrac" class="stop-verde"></stop>
+                  <stop :offset="grafico.zeroFrac" class="stop-vermelho"></stop>
+                  <stop offset="1" class="stop-vermelho"></stop>
+                </linearGradient>
+              </defs>
+              <line class="grafico-zero" x1="0" :y1="grafico.zeroY" :x2="grafico.w" :y2="grafico.zeroY"></line>
+              <path :d="grafico.area" fill="url(#gradSaldo)" opacity="0.18" stroke="none"></path>
+              <path :d="grafico.linha" fill="none" stroke="url(#gradSaldo)" stroke-width="2"
+                vector-effect="non-scaling-stroke"></path>
+              <line x-show="grafico.hojeX !== null" class="grafico-hoje" :x1="grafico.hojeX" y1="0"
+                :x2="grafico.hojeX" :y2="grafico.h"></line>
+            </svg>
+          </section>
+        </template>
+
         <!-- Mini-painel -->
         <section class="painel">
           <div><span>Salário</span><strong x-text="rendaFmt"></strong></div>
           <div><span>Fixos</span><strong x-text="fixosFmt"></strong></div>
-          <div><span>Custo/dia</span><strong x-text="custoDiarioFmt"></strong></div>
           <div><span>Saldo inicial</span><strong x-text="saldoInicialFmt"></strong></div>
-          <div class="painel-final"><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
+          <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
         </section>
 
         <!-- Botão de lançamentos do mês -->
@@ -56,7 +91,8 @@
             <template x-for="item in itensMes" :key="item.id">
               <div class="item-linha" :class="item.tipo">
                 <div class="item-info">
-                  <span class="item-desc" x-text="item.descricao || (item.tipo === 'saida' ? 'Saída' : 'Entrada')"></span>
+                  <span class="item-desc"
+                    x-text="item.descricao || (item.tipo === 'saida' ? 'Saída' : 'Entrada')"></span>
                   <span class="item-meta">
                     <template x-if="item.origem === 'serie'">
                       <span class="badge">recorrente · <span x-text="serieFimLabel(item)"></span></span>
@@ -102,19 +138,17 @@
           </div>
         </section>
 
-        <!-- Aviso: custos fixos ≥ renda (sobra ≤ 0) -->
-        <template x-if="fixosMaioresQueRenda">
-          <p class="aviso">⚠️ Custos fixos ≥ salário: sem sobra pra gastar. Ajuste salário ou fixos.</p>
-        </template>
-
         <!-- Modal de lançamento (novo / editar série / editar avulso) -->
         <div class="modal-backdrop" x-show="modalAberto" x-cloak @click.self="fecharModal()">
           <div class="modal">
-            <h2 x-text="modalModo === 'novo' ? 'Novo lançamento' : modalModo === 'editarSerie' ? 'Editar série (daqui pra frente)' : 'Editar lançamento'"></h2>
+            <h2
+              x-text="modalModo === 'novo' ? 'Novo lançamento' : modalModo === 'editarSerie' ? 'Editar série (daqui pra frente)' : 'Editar lançamento'">
+            </h2>
 
             <div class="tipo-toggle">
               <button :class="{ ativo: modalForm.tipo === 'saida' }" @click="modalForm.tipo = 'saida'">Saída</button>
-              <button :class="{ ativo: modalForm.tipo === 'entrada' }" @click="modalForm.tipo = 'entrada'">Entrada</button>
+              <button :class="{ ativo: modalForm.tipo === 'entrada' }"
+                @click="modalForm.tipo = 'entrada'">Entrada</button>
             </div>
 
             <label class="campo">

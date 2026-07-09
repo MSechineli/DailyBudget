@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 // Testes E2E do fluxo de lançamentos (avulsos e recorrentes) na modal e na
 // lista "Lançamentos do mês". Cobre os casos de uso centrais: replanejamento
@@ -171,26 +171,78 @@ test('excluir avulso remove só aquele lançamento', async ({ page }) => {
   await expect(page.locator('.celula.saida').first()).toHaveText('—');
 });
 
-test('o saldo acumulado de um mês rola pro início do mês seguinte', async ({ page }) => {
-  // sem nenhum lançamento, saldo inicial começa em zero
-  await expect(page.locator('.painel-final strong')).toHaveText('R$ 0,00');
+function saldoFinal(page: Page) {
+  return page.locator('.painel div').filter({ hasText: 'Saldo final' }).locator('strong');
+}
+
+function saldoInicial(page: Page) {
+  return page.locator('.painel div').filter({ hasText: 'Saldo inicial' }).locator('strong');
+}
+
+test('saída avulsa bate na hora (cheia) e o saldo recupera nos dias seguintes', async ({ page }) => {
+  // salário recorrente pra ter budget diário; sobra 3000, custo/dia > 0
+  await abrirNovoLancamento(page);
+  await preencherModal(page, { tipo: 'Entrada', valor: '3000,00', descricao: 'Salário' });
+  await page.getByRole('radio').nth(2).check(); // indefinida
+  await salvarModal(page);
+
+  // sem lançamento, saldo cresce só pelo budget diário: saldo(dia i) = daily·i
+  const cents = (loc: Locator) =>
+    loc.innerText().then((t) => (t.includes('-') ? -1 : 1) * Number(t.replace(/[^0-9]/g, '')));
+  const saldo = (i: number) => cents(page.locator('.planilha .saldo').nth(i)); // i = 0-based (dia i+1)
+
+  const saldoDia4Antes = await saldo(3);
+  const saldoDia5Antes = await saldo(4);
+  const daily = saldoDia5Antes - saldoDia4Antes; // budget diário ≈ 3000/dias do mês
+
+  // registra uma saída avulsa de R$ 500 no dia 5
+  await page.locator('.planilha tbody tr').nth(4).locator('.celula.saida').click();
+  await preencherModal(page, { valor: '500,00', descricao: 'compra' });
+  await salvarModal(page);
+
+  const saldoDia4 = await saldo(3);
+  const saldoDia5 = await saldo(4);
+  const saldoDia6 = await saldo(5);
+
+  // dia anterior à saída não muda
+  expect(saldoDia4).toBe(saldoDia4Antes);
+  // a saída bate CHEIA no dia 5: cai ~R$ 500 (menos o budget do dia), não uma fração diluída
+  expect(saldoDia4 - saldoDia5).toBeGreaterThan(40000); // > R$ 400 de queda
+  // recupera: dia 6 sobe de novo ~um budget diário (não os 500 de volta), ±1 de arredondamento
+  expect(saldoDia6 - saldoDia5).toBeGreaterThan(0);
+  expect(Math.abs(saldoDia6 - saldoDia5 - daily)).toBeLessThanOrEqual(1);
+});
+
+test('o saldo acumulado de um mês rola pro início do mês seguinte (imediato)', async ({ page }) => {
+  // sem nenhum lançamento, saldo final começa em zero
+  await expect(saldoFinal(page)).toHaveText('R$ 0,00');
 
   await abrirNovoLancamento(page);
   await preencherModal(page, { tipo: 'Entrada', valor: '1000,00', descricao: 'Freela' });
   await salvarModal(page);
 
-  const saldoFinalMesAtual = await page.locator('.painel-final strong').innerText();
-  expect(saldoFinalMesAtual).toBe('R$ 1.000,00'); // sem renda/fixos configurados, sobra 0 + entrada avulsa
+  // sem renda/fixos recorrentes, sobra 0 + entrada avulsa → saldo final 1000
+  await expect(saldoFinal(page)).toHaveText('R$ 1.000,00');
 
   await page.getByRole('button', { name: 'Próximo mês' }).click();
 
-  // mês seguinte começa com o saldo final do mês anterior como saldo inicial
-  const saldoInicial = page.locator('.painel div').filter({ hasText: 'Saldo inicial' }).locator('strong');
-  await expect(saldoInicial).toHaveText('R$ 1.000,00');
-  // sem nova atividade, o saldo final do novo mês é igual ao inicial
-  await expect(page.locator('.painel-final strong')).toHaveText('R$ 1.000,00');
+  // mês seguinte herda o saldo como saldo inicial, IMEDIATO já no dia 1
+  await expect(saldoInicial(page)).toHaveText('R$ 1.000,00');
+  await expect(saldoFinal(page)).toHaveText('R$ 1.000,00');
+  // sobra 0 → saldo é constante e igual ao herdado em todos os dias, inclusive o 1º
+  await expect(page.locator('.planilha .saldo').first()).toHaveText('R$ 1.000,00');
+});
 
-  // o saldo herdado é diluído pelos dias do mês, não aparece cheio já no dia 1
-  const saldoDia1 = await page.locator('.planilha .saldo').first().innerText();
-  expect(saldoDia1).not.toBe('R$ 1.000,00');
+test('painel "posso gastar" e gráfico do saldo aparecem', async ({ page }) => {
+  await abrirNovoLancamento(page);
+  await preencherModal(page, { tipo: 'Entrada', valor: '3000,00', descricao: 'Salário' });
+  await page.getByRole('radio').nth(2).check();
+  await salvarModal(page);
+
+  // destaque "posso gastar hoje" + por dia/semana
+  await expect(page.locator('.destaque-hoje strong')).toBeVisible();
+  await expect(page.locator('.destaque-sub')).toContainText('Por dia');
+  await expect(page.locator('.destaque-sub')).toContainText('Por semana');
+  // gráfico SVG renderizado
+  await expect(page.locator('svg.grafico')).toBeVisible();
 });

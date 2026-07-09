@@ -17,10 +17,10 @@ export interface DiaCalculado {
   data: string; // 'YYYY-MM-DD'
   entradasCentavos: number; // soma das entradas DAQUELE dia (bruto, só exibição)
   saidasCentavos: number; // soma das saídas DAQUELE dia (bruto, só exibição)
-  budgetAcumCentavos: number; // só a base (sobra + saldoInicial) suavizada, sem os lançamentos
-  saldoCentavos: number; // base + cada lançamento, cada um suavizado pelos dias restantes A PARTIR do dia em que aconteceu
+  budgetAcumCentavos: number; // tudo que você "tem/ganhou" até d (rollover + base + entradas diluídas), SEM descontar saídas
+  saldoCentavos: number; // budgetAcumCentavos − saídas acumuladas (saídas batem cheias no dia)
   status: 'verde' | 'vermelho';
-  diasNoVermelho: number; // 0 quando verde; usa a taxa diária EFETIVA do dia (base + lançamentos já ocorridos)
+  diasNoVermelho: number; // 0 quando verde; usa a taxa diária de recuperação (base + entradas diluídas ativas)
 }
 
 /** Monta um ResumoMes a partir dos números crus do mês. */
@@ -39,10 +39,10 @@ export function montarResumoMes(
 }
 
 /**
- * Budget acumulado até o dia `d`, fórmula PROPORCIONAL (evita drift de
- * arredondamento). Arredonda só o resultado final. Garantia: no último dia,
- * budgetAcum(diasNoMes) === baseCentavos (fecha exato). `baseCentavos` é o
- * total a dividir pelos dias do mês — normalmente `sobra + saldoInicial`.
+ * Acúmulo proporcional de `baseCentavos` até o dia `d` (fórmula PROPORCIONAL,
+ * evita drift de arredondamento). Arredonda só o resultado final. Garantia: no
+ * último dia, retorna `baseCentavos` exato. Usado pra diluir a sobra do mês
+ * (custo diário) igual pelos dias.
  */
 export function budgetAcumCentavos(baseCentavos: number, diasNoMes: number, d: number): number {
   return Math.round((baseCentavos * d) / diasNoMes);
@@ -53,16 +53,22 @@ type LancamentoCalc = Pick<Lancamento, 'data' | 'tipo' | 'valorCentavos'> & { de
 
 /**
  * Calcula o mês inteiro dia a dia. Filtra os lançamentos do mês (ignora
- * deletados e datas fora do mês), agrupa por dia e varre replanejando.
+ * deletados e datas fora do mês), agrupa por dia e varre acumulando.
  *
- * Modelo: nada bate no saldo de uma vez só. `saldoInicialCentavos` (rollover
- * do mês anterior — regra 4: derivado, não guardado; quem soma os meses
- * anteriores é `derive.ts`) e a sobra do mês formam a base, dividida pelos
- * `diasNoMes` a partir do dia 1. Cada lançamento AVULSO é um evento novo: seu
- * valor é dividido pelos dias que restam do mês A PARTIR do dia em que
- * aconteceu (inclusive) e passa a somar a essa taxa diária dali pra frente —
- * "sempre recalculando com base no que entra e sai". Todo evento fecha exato
- * no último dia do mês (soma tudo: base + cada lançamento no valor cheio).
+ * Modelo (ver DOMINIO.md):
+ * - **Sobra do mês** (receitas − custos fixos recorrentes) vira a `taxaBase`,
+ *   diluída igual por todos os dias (o "custo diário").
+ * - **Rollover** (`saldoInicialCentavos`, o saldo herdado do mês anterior —
+ *   regra 4: derivado, não guardado; quem soma os meses anteriores é
+ *   `derive.ts`) entra IMEDIATO: offset constante somado a todos os dias.
+ * - **Entrada avulsa** → DILUÍDA: seu valor é dividido pelos dias que restam do
+ *   mês a partir do dia em que aconteceu (inclusive) e soma à taxa diária dali
+ *   pra frente (vira "budget diário extra").
+ * - **Saída avulsa** → IMEDIATA: bate o valor cheio no dia em que ocorreu e
+ *   continua descontada dali pra frente. O saldo se recupera sozinho conforme o
+ *   budget diário acumula.
+ *
+ * Fecha exato no último dia: `saldoInicial + sobra + Σentradas − Σsaídas`.
  */
 export function calcularMes(
   ano: number,
@@ -72,8 +78,7 @@ export function calcularMes(
   saldoInicialCentavos = 0,
 ): DiaCalculado[] {
   const { sobraCentavos, diasNoMes } = resumo;
-  const baseAcumulavel = sobraCentavos + saldoInicialCentavos;
-  const taxaBase = baseAcumulavel / diasNoMes;
+  const taxaBase = sobraCentavos / diasNoMes;
 
   // 1. filtra + agrupa por dia (bruto, pra exibição E pra montar os eventos)
   const prefixo = `${ano}-${String(mes).padStart(2, '0')}-`; // 'YYYY-MM-'
@@ -88,33 +93,37 @@ export function calcularMes(
     porDia.set(d, acc);
   }
 
-  // 2. um evento por dia com lançamento: valor líquido (entrada - saída),
-  // dividido pelos dias restantes do mês a partir daquele dia (inclusive).
-  const eventos: Array<{ dia: number; taxa: number }> = [];
-  for (const [dia, { entrada, saida }] of porDia) {
-    const valorLiquido = entrada - saida;
-    if (valorLiquido === 0) continue;
+  // 2. cada ENTRADA vira um evento diluído pelos dias restantes a partir do
+  // seu dia (inclusive). Saídas NÃO viram evento — batem cheias (passo 3).
+  const eventosEntrada: Array<{ dia: number; taxa: number }> = [];
+  for (const [dia, { entrada }] of porDia) {
+    if (entrada === 0) continue;
     const diasRestantes = diasNoMes - dia + 1;
-    eventos.push({ dia, taxa: valorLiquido / diasRestantes });
+    eventosEntrada.push({ dia, taxa: entrada / diasRestantes });
   }
 
-  // 3. varre dia a dia: taxa diária efetiva = base + taxa de todo evento já
-  // ocorrido (dia do evento <= d). Arredonda só o total do dia (evita drift).
+  // 3. varre dia a dia. budgetBruto = rollover (imediato) + base diluída +
+  // entradas diluídas já ativas. Saídas acumulam cheias e descontam do saldo.
   const dias: DiaCalculado[] = [];
+  let saidasAcum = 0;
   for (let d = 1; d <= diasNoMes; d++) {
     const doDia = porDia.get(d) ?? { entrada: 0, saida: 0 };
+    saidasAcum += doDia.saida;
 
     let taxaDiaria = taxaBase;
-    let saldoBruto = taxaBase * d;
-    for (const ev of eventos) {
+    let budgetBruto = saldoInicialCentavos + taxaBase * d;
+    for (const ev of eventosEntrada) {
       if (ev.dia > d) continue;
       taxaDiaria += ev.taxa;
-      saldoBruto += ev.taxa * (d - ev.dia + 1);
+      budgetBruto += ev.taxa * (d - ev.dia + 1);
     }
 
-    const saldo = Math.round(saldoBruto);
+    // Arredonda só o budget (float) — saídas já são inteiras. Fecha exato no fim.
+    const budgetAcum = Math.round(budgetBruto);
+    const saldo = budgetAcum - saidasAcum;
     const status: DiaCalculado['status'] = saldo >= 0 ? 'verde' : 'vermelho';
-    // Dias no vermelho usa a taxa diária EFETIVA do dia (com tudo que já entrou/saiu).
+    // Dias no vermelho: taxa de RECUPERAÇÃO (base + entradas diluídas ativas);
+    // saídas são one-time, não entram na taxa.
     const diasNoVermelho =
       saldo >= 0 || taxaDiaria <= 0 ? 0 : Math.ceil(-saldo / taxaDiaria);
 
@@ -123,7 +132,7 @@ export function calcularMes(
       data: `${prefixo}${String(d).padStart(2, '0')}`,
       entradasCentavos: doDia.entrada,
       saidasCentavos: doDia.saida,
-      budgetAcumCentavos: budgetAcumCentavos(baseAcumulavel, diasNoMes, d),
+      budgetAcumCentavos: budgetAcum,
       saldoCentavos: saldo,
       status,
       diasNoVermelho,

@@ -6,7 +6,6 @@ import {
   custoDiarioMedio,
   itensDoMes,
   rendaMes,
-  resumoMesDe,
   saldoInicialMes,
   totalFixosMes,
   type ItemMes,
@@ -94,10 +93,25 @@ function app() {
       if (!this.pronto) return '—';
       return formatBRL(saldoInicialMes(this.store.dados, this.store.mesAtual));
     },
-    /** true quando custos fixos ≥ renda (sobra ≤ 0). UI mostra aviso. */
-    get fixosMaioresQueRenda(): boolean {
-      if (!this.pronto) return false;
-      return resumoMesDe(this.store.dados, this.store.mesAtual).sobraCentavos <= 0;
+
+    // ---- quanto posso gastar (hoje / dia / semana) ----
+    /** O DiaCalculado de hoje, se o mês exibido é o mês de hoje; senão null. */
+    get diaDeHoje(): DiaCalculado | null {
+      return this.dias.find((d) => d.data === this.hoje) ?? null;
+    },
+    /** Saldo disponível hoje (o quanto dá pra gastar e ficar em zero). '—' fora do mês atual. */
+    get disponivelHojeFmt(): string {
+      const hoje = this.diaDeHoje;
+      return hoje ? formatBRL(hoje.saldoCentavos) : '—';
+    },
+    get disponivelHojeVermelho(): boolean {
+      const hoje = this.diaDeHoje;
+      return hoje ? hoje.saldoCentavos < 0 : false;
+    },
+    /** Ritmo semanal = custo diário médio × 7. */
+    get porSemanaFmt(): string {
+      if (!this.pronto) return '—';
+      return formatBRL(Math.round(custoDiarioMedio(this.store.dados, this.store.mesAtual) * 7));
     },
 
     // ---- lançamentos do mês (avulsos + séries recorrentes) ----
@@ -248,6 +262,53 @@ function app() {
     // ---- planilha ----
     get dias(): DiaCalculado[] {
       return this.pronto ? calcularMesDe(this.store.dados, this.store.mesAtual) : [];
+    },
+
+    /**
+     * Geometria do gráfico de saldo do mês (SVG inline, sem lib). Mapeia o
+     * saldo de cada dia num viewBox fixo; verde acima do zero, vermelho abaixo
+     * (via gradiente com corte na linha do zero). Marca o dia de hoje.
+     */
+    get grafico(): {
+      w: number;
+      h: number;
+      linha: string;
+      area: string;
+      zeroY: number;
+      zeroFrac: number;
+      hojeX: number | null;
+    } | null {
+      const dias = this.dias;
+      if (dias.length < 2) return null;
+      const w = 300;
+      const h = 90;
+      const pad = 6;
+      const saldos = dias.map((d) => d.saldoCentavos);
+      const min = Math.min(0, ...saldos);
+      const max = Math.max(0, ...saldos);
+      const span = max - min || 1; // evita divisão por zero
+      const n = dias.length;
+      const x = (i: number) => pad + (i / (n - 1)) * (w - 2 * pad);
+      const y = (v: number) => pad + (1 - (v - min) / span) * (h - 2 * pad);
+      const pts = saldos.map((v, i) => [x(i), y(v)] as const);
+      const linha = pts
+        .map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+        .join(' ');
+      const zeroY = y(0);
+      const area =
+        `M${x(0).toFixed(1)},${zeroY.toFixed(1)} ` +
+        pts.map((p) => `L${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') +
+        ` L${x(n - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
+      const hojeIdx = dias.findIndex((d) => d.data === this.hoje);
+      return {
+        w,
+        h,
+        linha,
+        area,
+        zeroY,
+        zeroFrac: zeroY / h,
+        hojeX: hojeIdx >= 0 ? x(hojeIdx) : null,
+      };
     },
     ehHoje(data: string): boolean {
       return data === this.hoje;

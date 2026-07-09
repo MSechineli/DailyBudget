@@ -4,21 +4,13 @@ Contexto e decisões de arquitetura deste projeto. Leia antes de escrever códig
 
 ## O que é
 
-App pessoal de controle de gastos com **orçamento diário rolante (saldo acumulado)**.
-Cada dia você "ganha" um pouco de budget. Nada bate no saldo de uma vez só: todo
-lançamento (gasto ou recebimento) é diluído pelos dias que restam do mês a partir do
-dia em que aconteceu, e o app **recalcula sempre** com base no que já entrou e saiu.
-Se o saldo acumulado fica negativo, você está "no vermelho" — e por quantos dias, no
-ritmo diário atual (deficit ÷ taxa diária efetiva).
+App pessoal de **orçamento diário rolante**: responde "quanto posso gastar hoje/na
+semana". Você ganha um custo diário de budget; gastos descontam na hora, recebimentos
+diluem, e o saldo rola de um mês pro outro.
 
-**Taxa diária base = (renda do mês − custos fixos do mês) ÷ dias do mês.** Cada
-lançamento avulso soma sua própria fatia a essa taxa, a partir do dia em que aconteceu.
-
-**O saldo rola entre meses:** o mês N+1 herda o saldo final do mês N (positivo ou
-negativo) como saldo inicial, num rollover contínuo desde o primeiro lançamento/série
-que existir. Nada de "zerar" todo mês. Esse saldo herdado entra como a base do dia 1,
-diluído pelo mês inteiro igual qualquer sobra — ver `DOMINIO.md` (fórmula completa e
-exemplos trabalhados).
+**A regra de negócio (fórmulas de saldo, séries recorrentes, rollover, "posso gastar")
+vive em `DOMINIO.md` — leia lá antes de mexer em `domain.ts`/`derive.ts`.** Este
+arquivo é só arquitetura, stack e convenções.
 
 ## Arquitetura (sem servidor)
 
@@ -114,22 +106,12 @@ exemplos trabalhados).
   — igual qualquer outro lançamento, só que valendo por uma janela de meses em vez de
   um dia só. `config` guarda só o que sobrou de app-wide (`ano`).
 - **`series` é um map por `id`.** Cada série tem `mesInicio`/`mesFim` (`"YYYY-MM"`,
-  ambos inclusive); `mesFim: null` = indefinida (repete todo mês até ser encerrada).
-  Uma série está "ativa" num mês `mk` quando `mesInicio <= mk <= (mesFim ?? infinito)`.
-  O valor de uma série ativa entra **suavizado** na fórmula de orçamento do mês (nunca
-  aparece como um lançamento avulso de um dia específico — ver Derivações).
-- **Editar uma série "daqui pra frente" é um split, não um update in-place**: trunca
-  a série existente em `mesAnterior(mêsEditado)` (preserva o passado intocado) e cria
-  uma nova série a partir do mês editado com os novos valores, herdando o `mesFim`
-  original. Se o mês editado é o próprio `mesInicio` da série (nada "passou" ainda),
-  edita em lugar. Mesma lógica pra encerrar: se `mk === mesInicio`, é uma exclusão
-  completa; senão, só trunca `mesFim = mesAnterior(mk)`.
-- **`lancamentos` é um map por `id`** (não array), só pra lançamentos avulsos. Cada um
-  vira um evento a partir do dia em que aconteceu (diluído pelos dias restantes do
-  mês — nunca bate no saldo de uma vez só, ver `DOMINIO.md`). Cada item tem
-  `updatedAt` e `deleted` (soft delete). Isso deixa a porta aberta pra merge item-a-item
-  entre devices no futuro, sem retrabalho de schema. Por ora o sync é last-write-wins
-  do arquivo inteiro.
+  ambos inclusive); `mesFim: null` = indefinida. A semântica (série "ativa" no mês,
+  regra de split ao editar "daqui pra frente", encerrar) está em `DOMINIO.md`.
+- **`lancamentos` é um map por `id`** (não array), só pra lançamentos avulsos (de um dia
+  só). Cada item tem `updatedAt` e `deleted` (soft delete). Isso deixa a porta aberta
+  pra merge item-a-item entre devices no futuro, sem retrabalho de schema. Por ora o
+  sync é last-write-wins do arquivo inteiro.
 - **`tipo`** (em `Lancamento` e `SerieRecorrente`): `"entrada"` (dinheiro que entra) |
   `"saida"` (dinheiro que sai). `valorCentavos` é sempre positivo; o sinal vem do
   `tipo`. Ver `DOMINIO.md`.
@@ -139,27 +121,11 @@ exemplos trabalhados).
 
 ## Derivações (calcular, não armazenar)
 
-**`DOMINIO.md` é a fonte de verdade das fórmulas.** Resumo, mas leia lá o detalhe
-(incluindo os casos de borda e o exemplo trabalhado usado como fixture de teste):
-
-- `diasNoMes(ano, mes)` = número de dias do mês.
-- `rendaMes` = soma das séries de entrada ativas no mês.
-- `totalFixosMes` = soma das séries de saída ativas no mês.
-- `sobra` = rendaMes − totalFixosMes (pode ser negativa).
-- `baseAcumulavel` = sobra + saldoInicial (saldo herdado do mês anterior, rollover).
-- `taxaBase` = baseAcumulavel / diasNoMes (float — o ponto de partida do dia 1).
-- Cada lançamento avulso vira um **evento**: `taxa = valorLíquido / diasRestantes`,
-  onde `diasRestantes = diasNoMes - diaDoEvento + 1` (conta o próprio dia).
-- Por dia `d` (1-indexed):
-  - `taxaDiaria(d)` = `taxaBase` + soma da `taxa` de todo evento com `diaDoEvento <= d`.
-  - `saldo(d)` = `round(taxaBase×d + Σ taxa×(d - diaDoEvento + 1))`, pra cada evento já
-    ocorrido — fórmula PROPORCIONAL por evento, não soma valores crus de uma vez.
-    Fecha exato no último dia (cada evento contribui seu valor cheio).
-  - verde se `saldo(d) >= 0`, senão vermelho.
-  - `diasNoVermelho(d)` = se saldo < 0 e `taxaDiaria(d) > 0`, `ceil(-saldo / taxaDiaria(d))`, senão 0.
-
-Implementação pura em `src/data/domain.ts`; a ponte com o AppData (resolução de
-séries recorrentes ativas por mês) em `src/data/derive.ts`.
+Saldo, status verde/vermelho, custo diário, rollover e "posso gastar" são **todos
+derivados** on the fly da fonte de verdade (lançamentos + séries) — nunca guardados
+(regra 4). As fórmulas, casos de borda e exemplos trabalhados (fixtures de teste) estão
+em **`DOMINIO.md`**. Implementação pura em `src/data/domain.ts`; a ponte com o
+`AppData` (séries recorrentes ativas, rollover) em `src/data/derive.ts`.
 
 ## Sync com Drive (client-side)
 

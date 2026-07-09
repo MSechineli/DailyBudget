@@ -114,14 +114,13 @@ describe('calcularMesDe / agregadoMesDe', () => {
       z: lanc({ id: 'z', data: '2026-10-01', tipo: 'saida', valorCentavos: 99999 }),
     };
     const dias = calcularMesDe(d, '2026-09');
-    // cada lançamento é suavizado pelos dias restantes a partir do dia em que
-    // aconteceu — não bate de uma vez só (mesmos números de domain.test.ts).
-    expect(dias[0]!.saldoCentavos).toBe(9167);
+    // saída bate cheia no dia; entrada é diluída (mesmos números de domain.test.ts).
+    expect(dias[0]!.saldoCentavos).toBe(-15000);
     expect(dias[29]!.saldoCentavos).toBe(285000);
 
     const ag = agregadoMesDe(d, '2026-09');
     expect(ag.totalSaidasCentavos).toBe(30000);
-    expect(ag.diasNoVermelho).toBe(0);
+    expect(ag.diasNoVermelho).toBe(2);
   });
 });
 
@@ -204,13 +203,12 @@ describe('saldoInicialMes (rollover contínuo entre meses)', () => {
     expect(saldoInicialMes(d, '2026-10')).toBe(280000);
   });
 
-  it('calcularMesDe/agregadoMesDe refletem o saldo inicial herdado, suavizado junto com a sobra', () => {
+  it('calcularMesDe/agregadoMesDe refletem o saldo inicial herdado (imediato no dia 1)', () => {
     const d = desdeSetembro();
-    // novembro (30 dias) herda a sobra de set+out = 600000; sobra do próprio
-    // mês = 300000 → base 900000, dividida pelos 30 dias (não somada crua no dia 1).
+    // novembro (30 dias) herda a sobra de set+out = 600000; rollover é imediato,
+    // então já aparece cheio no dia 1 + o budget do dia (300000/30 = 10000).
     const dias = calcularMesDe(d, '2026-11');
-    expect(dias[0]!.saldoCentavos).toBe(30000); // round(900000 * 1 / 30)
-    expect(dias[0]!.saldoCentavos).not.toBe(600000 + 10000); // não aparece cheio no dia 1
+    expect(dias[0]!.saldoCentavos).toBe(610000); // 600000 herdado + 10000 do dia
     expect(agregadoMesDe(d, '2026-11').saldoFinalCentavos).toBe(600000 + 300000);
   });
 });
