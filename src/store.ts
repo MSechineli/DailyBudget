@@ -1,12 +1,20 @@
 import { carregar, pedirPersistencia, salvar } from './data/storage.ts';
 import { migrar } from './data/migrate.ts';
 import { validarAppData } from './data/validate.ts';
-import { hojeISO, mesKeyDeData, toMesKey, type ISODate, type MesKey } from './data/dates.ts';
+import {
+  adicionarMeses,
+  hojeISO,
+  mesAnterior,
+  mesKeyDeData,
+  toMesKey,
+  type ISODate,
+  type MesKey,
+} from './data/dates.ts';
 import {
   novoId,
   type AppData,
-  type CustoFixo,
   type Lancamento,
+  type SerieRecorrente,
   type TipoLancamento,
 } from './data/schema.ts';
 
@@ -15,6 +23,9 @@ import {
 // best-effort com debounce vem depois, quando o Drive entrar).
 
 type Estado = 'carregando' | 'pronto' | 'erro';
+
+/** Recorrência escolhida na modal de novo lançamento. */
+export type Recorrencia = 'nenhuma' | 'indefinida' | { meses: number };
 
 export class Store {
   dados!: AppData;
@@ -79,7 +90,7 @@ export class Store {
     }
   }
 
-  // ---- CRUD de lançamentos ----
+  // ---- CRUD de lançamentos avulsos (day-exact) ----
 
   adicionarLancamento(input: {
     data: ISODate;
@@ -122,68 +133,119 @@ export class Store {
     this.persistir();
   }
 
-  // ---- planilha: um valor por dia (upsert por data+tipo) ----
+  // ---- séries recorrentes (salário, gastos fixos, qualquer lançamento repetido) ----
 
-  /** Lançamento vivo daquele dia+tipo, se houver. */
-  private acharDoDia(data: ISODate, tipo: TipoLancamento): Lancamento | undefined {
-    return Object.values(this.dados.lancamentos).find(
-      (l) => !l.deleted && l.data === data && l.tipo === tipo,
-    );
+  adicionarSerie(input: {
+    tipo: TipoLancamento;
+    valorCentavos: number;
+    descricao: string;
+    mesInicio: MesKey;
+    repeticao: 'indefinida' | { meses: number };
+  }): SerieRecorrente {
+    const mesFim =
+      input.repeticao === 'indefinida'
+        ? null
+        : adicionarMeses(input.mesInicio, input.repeticao.meses - 1);
+    const s: SerieRecorrente = {
+      id: novoId('serie'),
+      tipo: input.tipo,
+      valorCentavos: input.valorCentavos,
+      descricao: input.descricao.trim(),
+      mesInicio: input.mesInicio,
+      mesFim,
+      updatedAt: new Date().toISOString(),
+      deleted: false,
+    };
+    this.dados.series[s.id] = s;
+    this.persistir();
+    return s;
   }
 
   /**
-   * Define o valor único de um dia (célula da planilha). Mantém no máximo um
-   * lançamento vivo por (data, tipo): atualiza o existente, cria se não houver,
-   * ou soft-deleta quando `centavos` é null/0.
+   * Ponto de entrada único da modal de novo lançamento: sem recorrência vira
+   * um lançamento avulso (day-exact); com recorrência vira uma série
+   * recorrente a partir do mês da data informada.
    */
-  setValorDia(data: ISODate, tipo: TipoLancamento, centavos: number | null): void {
-    const existente = this.acharDoDia(data, tipo);
-    if (centavos === null || centavos <= 0) {
-      if (existente) this.removerLancamento(existente.id);
+  adicionarLancamentoComRecorrencia(input: {
+    data: ISODate;
+    tipo: TipoLancamento;
+    valorCentavos: number;
+    descricao: string;
+    recorrencia: Recorrencia;
+  }): void {
+    if (input.recorrencia === 'nenhuma') {
+      this.adicionarLancamento(input);
       return;
     }
-    if (existente) {
-      this.atualizarLancamento(existente.id, { valorCentavos: centavos });
-    } else {
-      this.adicionarLancamento({ data, tipo, valorCentavos: centavos, descricao: '' });
+    this.adicionarSerie({
+      tipo: input.tipo,
+      valorCentavos: input.valorCentavos,
+      descricao: input.descricao,
+      mesInicio: mesKeyDeData(input.data),
+      repeticao: input.recorrencia,
+    });
+  }
+
+  /**
+   * Edita uma série "a partir do mês `mk`" sem tocar em meses anteriores.
+   * Se `mk` é o mês em que a série começou, edita em lugar (nada passou
+   * ainda). Senão, faz um split: trunca a série antiga em mesAnterior(mk) e
+   * cria uma nova série com o patch cobrindo de `mk` até o mesFim original.
+   */
+  editarSerieAPartir(
+    id: string,
+    mk: MesKey,
+    patch: { valorCentavos?: number; descricao?: string },
+  ): void {
+    const atual = this.dados.series[id];
+    if (!atual || atual.deleted) return;
+
+    if (mk === atual.mesInicio) {
+      this.dados.series[id] = {
+        ...atual,
+        ...patch,
+        descricao: patch.descricao !== undefined ? patch.descricao.trim() : atual.descricao,
+        id,
+        updatedAt: new Date().toISOString(),
+      };
+      this.persistir();
+      return;
     }
-  }
 
-  // ---- config (padrão): salário + custos fixos ----
+    const now = new Date().toISOString();
+    const fimOriginal = atual.mesFim;
+    atual.mesFim = mesAnterior(mk);
+    atual.updatedAt = now;
 
-  setRenda(centavos: number): void {
-    this.dados.config.rendaPadraoCentavos = Math.max(0, Math.round(centavos));
-    this.persistir();
-  }
-
-  /** Adiciona um custo fixo ao padrão. Retorna o id gerado. */
-  addCustoFixo(nome: string, valorCentavos: number): string {
-    const fixo: CustoFixo = {
-      id: novoId('fx'),
-      nome: nome.trim(),
-      valorCentavos: Math.max(0, Math.round(valorCentavos)),
+    const nova: SerieRecorrente = {
+      ...atual,
+      id: novoId('serie'),
+      valorCentavos: patch.valorCentavos ?? atual.valorCentavos,
+      descricao: patch.descricao !== undefined ? patch.descricao.trim() : atual.descricao,
+      mesInicio: mk,
+      mesFim: fimOriginal,
+      updatedAt: now,
+      deleted: false,
     };
-    this.dados.config.custosFixosPadrao.push(fixo);
+    this.dados.series[nova.id] = nova;
     this.persistir();
-    return fixo.id;
   }
 
-  atualizarCustoFixo(id: string, patch: Partial<Omit<CustoFixo, 'id'>>): void {
-    const fixo = this.dados.config.custosFixosPadrao.find((f) => f.id === id);
-    if (!fixo) return;
-    if (patch.nome !== undefined) fixo.nome = patch.nome.trim();
-    if (patch.valorCentavos !== undefined) {
-      fixo.valorCentavos = Math.max(0, Math.round(patch.valorCentavos));
+  /**
+   * Encerra uma série "a partir do mês `mk`". Se `mk` é o mês em que a série
+   * começou, é uma exclusão completa (nunca teve mês ativo). Senão, trunca
+   * mesFim em mesAnterior(mk), preservando o histórico.
+   */
+  encerrarSerieAPartir(id: string, mk: MesKey): void {
+    const atual = this.dados.series[id];
+    if (!atual || atual.deleted) return;
+    if (mk === atual.mesInicio) {
+      atual.deleted = true;
+    } else {
+      atual.mesFim = mesAnterior(mk);
     }
+    atual.updatedAt = new Date().toISOString();
     this.persistir();
-  }
-
-  removerCustoFixo(id: string): void {
-    const antes = this.dados.config.custosFixosPadrao.length;
-    this.dados.config.custosFixosPadrao = this.dados.config.custosFixosPadrao.filter(
-      (f) => f.id !== id,
-    );
-    if (this.dados.config.custosFixosPadrao.length !== antes) this.persistir();
   }
 
   // ---- backup: export / import ----

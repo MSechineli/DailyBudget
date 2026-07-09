@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "cap:sync": "npm run build && cap sync",
     "android:open": "cap open android",
     "android:build": "npm run build && cap sync && cd android && ./gradlew assembleDebug"
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
+    "@playwright/test": "^1.61.1",
     "@types/alpinejs": "^3.13.11",
     "fake-indexeddb": "^6.2.5",
     "typescript": "^5.7.3",

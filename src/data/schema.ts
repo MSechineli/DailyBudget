@@ -3,30 +3,17 @@ import type { ISODate, MesKey } from './dates.ts';
 // Versão atual do schema. Regra 3: bate no JSON desde o commit 1.
 // Ao mudar a forma dos dados, incrementa e adiciona um passo em migrate.ts.
 // v2: tipos renomeados de gasto/recebido para saida/entrada (DOMINIO.md).
-export const SCHEMA_VERSION = 2;
+// v3: remove config de renda/custos fixos "pra sempre"; salário e gastos
+// fixos viram séries recorrentes (mesma coisa que qualquer outro lançamento,
+// só que com uma janela de meses em vez de uma data única).
+export const SCHEMA_VERSION = 3;
 
 // Entrada = dinheiro que ENTRA; Saída = dinheiro que SAI. valorCentavos é
 // sempre positivo — o sinal vem do tipo.
 export type TipoLancamento = 'entrada' | 'saida';
 
-export interface CustoFixo {
-  id: string;
-  nome: string;
-  valorCentavos: number;
-}
-
 export interface Config {
   ano: number;
-  rendaPadraoCentavos: number;
-  custosFixosPadrao: CustoFixo[];
-}
-
-/** Um mês só existe em `meses` quando tem override; senão herda a config. */
-export interface Mes {
-  // null = usa rendaPadraoCentavos da config.
-  rendaOverrideCentavos: number | null;
-  // null = usa custosFixosPadrao; array = substitui só neste mês.
-  custosFixosOverride: CustoFixo[] | null;
 }
 
 export interface Lancamento {
@@ -39,6 +26,24 @@ export interface Lancamento {
   deleted: boolean; // soft delete, pra abrir porta a merge item-a-item no futuro
 }
 
+/**
+ * Lançamento recorrente: mesma entrada/saída todo mês dentro de uma janela
+ * [mesInicio, mesFim]. `mesFim: null` = indefinida (repete até ser encerrada).
+ * O valor entra "suavizado" no orçamento do mês (mesma fórmula de sobra/dia
+ * que hoje usava renda/custos fixos da config) — nunca aparece como um
+ * lançamento avulso de um dia específico.
+ */
+export interface SerieRecorrente {
+  id: string;
+  tipo: TipoLancamento;
+  valorCentavos: number;
+  descricao: string;
+  mesInicio: MesKey; // 'YYYY-MM', primeiro mês em que a série vale
+  mesFim: MesKey | null; // inclusive; null = indefinida
+  updatedAt: string;
+  deleted: boolean; // soft delete
+}
+
 export interface SyncState {
   driveFileId: string | null;
   lastSyncedHash: string | null;
@@ -47,7 +52,7 @@ export interface SyncState {
 export interface AppData {
   version: number;
   config: Config;
-  meses: Record<MesKey, Mes>;
+  series: Record<string, SerieRecorrente>;
   lancamentos: Record<string, Lancamento>;
   sync: SyncState;
 }
@@ -56,12 +61,8 @@ export interface AppData {
 export function criarDadosVazios(ano: number): AppData {
   return {
     version: SCHEMA_VERSION,
-    config: {
-      ano,
-      rendaPadraoCentavos: 0,
-      custosFixosPadrao: [],
-    },
-    meses: {},
+    config: { ano },
+    series: {},
     lancamentos: {},
     sync: {
       driveFileId: null,

@@ -16,9 +16,25 @@ function comLancamento() {
   return d;
 }
 
+function comSerie() {
+  const d = criarDadosVazios(2026);
+  d.series['serie_1'] = {
+    id: 'serie_1',
+    tipo: 'entrada',
+    valorCentavos: 400000,
+    descricao: 'Salário',
+    mesInicio: '2026-01',
+    mesFim: null,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    deleted: false,
+  };
+  return d;
+}
+
 describe('validarAppData', () => {
   it('aceita dados válidos', () => {
     expect(() => validarAppData(comLancamento())).not.toThrow();
+    expect(() => validarAppData(comSerie())).not.toThrow();
   });
 
   it('rejeita raiz não-objeto', () => {
@@ -63,18 +79,34 @@ describe('validarAppData', () => {
     expect(() => validarAppData(d)).toThrow(/não bate com a chave/);
   });
 
-  it('rejeita chave de mês malformada', () => {
-    const d = criarDadosVazios(2026);
-    (d.meses as any)['2026-1'] = { rendaOverrideCentavos: null, custosFixosOverride: null };
-    expect(() => validarAppData(d)).toThrow(/chave de mês/);
+  it('rejeita mesInicio em formato inválido', () => {
+    const d = comSerie();
+    (d.series['serie_1'] as any).mesInicio = '2026-1';
+    expect(() => validarAppData(d)).toThrow(/mesInicio/);
   });
 
-  it('aceita override de mês com valores válidos', () => {
-    const d = criarDadosVazios(2026);
-    d.meses['2026-02'] = {
-      rendaOverrideCentavos: 500000,
-      custosFixosOverride: [{ id: 'x', nome: 'X', valorCentavos: 1000 }],
-    };
+  it('rejeita mesFim em formato inválido (quando não-null)', () => {
+    const d = comSerie();
+    (d.series['serie_1'] as any).mesFim = '2026-2';
+    expect(() => validarAppData(d)).toThrow(/mesFim/);
+  });
+
+  it('aceita mesFim null (série indefinida)', () => {
+    const d = comSerie();
+    d.series['serie_1']!.mesFim = null;
     expect(() => validarAppData(d)).not.toThrow();
+  });
+
+  it('rejeita mesFim anterior a mesInicio', () => {
+    const d = comSerie();
+    d.series['serie_1']!.mesInicio = '2026-05';
+    d.series['serie_1']!.mesFim = '2026-04';
+    expect(() => validarAppData(d)).toThrow(/mesFim/);
+  });
+
+  it('rejeita id de série que não bate com a chave do map', () => {
+    const d = comSerie();
+    d.series['outra_chave'] = { ...d.series['serie_1']! };
+    expect(() => validarAppData(d)).toThrow(/não bate com a chave/);
   });
 });

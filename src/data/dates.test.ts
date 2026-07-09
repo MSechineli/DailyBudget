@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adicionarMeses,
   diasNoMes,
   isISODateValida,
+  mesAnterior,
   mesKeyDeData,
+  mesSeguinte,
   parseISODate,
   parseMesKey,
   toISODate,
@@ -53,5 +56,24 @@ describe('isISODateValida', () => {
     expect(isISODateValida('2025-02-29')).toBe(false); // não bissexto
     expect(isISODateValida('05/01/2026')).toBe(false);
     expect(isISODateValida(20260105 as unknown)).toBe(false);
+  });
+});
+
+describe('adicionarMeses / mesAnterior / mesSeguinte', () => {
+  it('soma e subtrai meses dentro do mesmo ano', () => {
+    expect(adicionarMeses('2026-03', 2)).toBe('2026-05');
+    expect(adicionarMeses('2026-03', -2)).toBe('2026-01');
+  });
+
+  it('vira o ano corretamente', () => {
+    expect(adicionarMeses('2026-01', -1)).toBe('2025-12');
+    expect(adicionarMeses('2026-12', 1)).toBe('2027-01');
+    expect(mesAnterior('2026-01')).toBe('2025-12');
+    expect(mesSeguinte('2026-12')).toBe('2027-01');
+  });
+
+  it('mesAnterior/mesSeguinte são adicionarMeses(±1)', () => {
+    expect(mesAnterior('2026-07')).toBe('2026-06');
+    expect(mesSeguinte('2026-07')).toBe('2026-08');
   });
 });

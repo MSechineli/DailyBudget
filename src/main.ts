@@ -1,33 +1,58 @@
 import Alpine from 'alpinejs';
-import { Store } from './store.ts';
+import { Store, type Recorrencia } from './store.ts';
 import {
   agregadoMesDe,
   calcularMesDe,
   custoDiarioMedio,
-  fixosMes,
+  itensDoMes,
   rendaMes,
   resumoMesDe,
+  saldoInicialMes,
   totalFixosMes,
+  type ItemMes,
 } from './data/derive.ts';
 import type { DiaCalculado } from './data/domain.ts';
 import { formatBRL, parseBRLToCentavos } from './data/money.ts';
-import { hojeISO, parseMesKey, toMesKey } from './data/dates.ts';
+import { hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
 import type { TipoLancamento } from './data/schema.ts';
 import './style.css';
 
-// Componente principal do Alpine: a planilha diária. Uma linha por dia do mês,
-// com as células de Saída/Entrada editáveis direto (um valor por dia), e o saldo
-// acumulando. Config (salário + custos fixos) num painel colapsável.
+type ModalModo = 'novo' | 'editarSerie' | 'editarLancamento';
+
+interface ModalForm {
+  tipo: TipoLancamento;
+  data: string; // 'YYYY-MM-DD'
+  valor: string; // texto BRL, ex.: "19,90"
+  descricao: string;
+  recorrenciaTipo: 'nenhuma' | 'nMeses' | 'indefinida';
+  recorrenciaMeses: string;
+}
+
+// Componente principal do Alpine: a planilha diária. Uma linha por dia do
+// mês, com os totais de Saída/Entrada avulsos (read-only) e o saldo
+// acumulando. Lançamentos (avulsos e recorrentes) são criados/editados pela
+// modal; a lista "Lançamentos do mês" mostra tudo o que compõe o mês atual.
 //
 // IMPORTANTE: todo acesso ao store é via `this.store` (o proxy reativo do
 // Alpine), nunca por variável de closure — senão o re-render não dispara.
 function app() {
   return {
     store: new Store(),
-    configAberta: false,
+    listaAberta: false,
     hoje: hojeISO(),
-    // form de novo custo fixo
-    novoFixo: { nome: '', valor: '' },
+
+    // ---- modal de lançamento ----
+    modalAberto: false,
+    modalModo: 'novo' as ModalModo,
+    modalAlvoId: null as string | null,
+    modalForm: {
+      tipo: 'saida',
+      data: hojeISO(),
+      valor: '',
+      descricao: '',
+      recorrenciaTipo: 'nenhuma',
+      recorrenciaMeses: '3',
+    } as ModalForm,
 
     async init() {
       await this.store.init();
@@ -64,43 +89,129 @@ function app() {
       if (!this.pronto) return '—';
       return formatBRL(agregadoMesDe(this.store.dados, this.store.mesAtual).saldoFinalCentavos);
     },
+    /** Saldo herdado do(s) mês(es) anterior(es) — rollover contínuo. */
+    get saldoInicialFmt(): string {
+      if (!this.pronto) return '—';
+      return formatBRL(saldoInicialMes(this.store.dados, this.store.mesAtual));
+    },
     /** true quando custos fixos ≥ renda (sobra ≤ 0). UI mostra aviso. */
     get fixosMaioresQueRenda(): boolean {
       if (!this.pronto) return false;
       return resumoMesDe(this.store.dados, this.store.mesAtual).sobraCentavos <= 0;
     },
 
-    // ---- config ----
-    /** Salário do mês em centavos (crus), para os inputs de config. */
-    rendaMes(): number {
-      return this.pronto ? rendaMes(this.store.dados, this.store.mesAtual) : 0;
+    // ---- lançamentos do mês (avulsos + séries recorrentes) ----
+    get itensMes(): ItemMes[] {
+      return this.pronto ? itensDoMes(this.store.dados, this.store.mesAtual) : [];
     },
-    get custosFixos() {
-      return this.pronto ? fixosMes(this.store.dados, this.store.mesAtual) : [];
+    /** Rótulo de até quando a série vale. */
+    serieFimLabel(item: ItemMes): string {
+      if (item.origem !== 'serie') return '';
+      return item.serie.mesFim === null ? 'sem fim' : `até ${item.serie.mesFim}`;
     },
-    /** Valor para edição (reais, sem "R$"); vazio quando 0. */
+    /** Texto do botão de encerrar: exclui se a série ainda não teve mês ativo antes do atual. */
+    encerrarLabel(item: ItemMes): string {
+      if (item.origem !== 'serie') return '';
+      return item.serie.mesInicio === this.store.mesAtual ? 'Excluir' : 'Encerrar daqui';
+    },
+    abrirModalEditarSerie(item: ItemMes) {
+      if (item.origem !== 'serie') return;
+      this.modalModo = 'editarSerie';
+      this.modalAlvoId = item.id;
+      this.modalForm = {
+        tipo: item.tipo,
+        data: this.store.mesAtual + '-01',
+        valor: this.plain(item.valorCentavos),
+        descricao: item.descricao,
+        recorrenciaTipo: 'nenhuma',
+        recorrenciaMeses: '3',
+      };
+      this.modalAberto = true;
+    },
+    abrirModalEditarLancamento(item: ItemMes) {
+      if (item.origem !== 'avulso') return;
+      this.modalModo = 'editarLancamento';
+      this.modalAlvoId = item.id;
+      this.modalForm = {
+        tipo: item.tipo,
+        data: item.data,
+        valor: this.plain(item.valorCentavos),
+        descricao: item.descricao,
+        recorrenciaTipo: 'nenhuma',
+        recorrenciaMeses: '3',
+      };
+      this.modalAberto = true;
+    },
+    encerrarSerie(item: ItemMes) {
+      if (item.origem !== 'serie') return;
+      if (!confirm(`${this.encerrarLabel(item)} "${item.descricao}"?`)) return;
+      this.store.encerrarSerieAPartir(item.id, this.store.mesAtual);
+    },
+    removerAvulso(item: ItemMes) {
+      if (item.origem !== 'avulso') return;
+      if (!confirm(`Excluir "${item.descricao || (item.tipo === 'saida' ? 'saída' : 'entrada')}"?`)) return;
+      this.store.removerLancamento(item.id);
+    },
+
+    // ---- modal: abrir em branco / salvar / fechar ----
+    /** Data padrão pro form novo: hoje se estiver no mês atual, senão dia 1 do mês. */
+    dataPadraoNoMes(): string {
+      return mesKeyDeData(this.hoje) === this.store.mesAtual ? this.hoje : `${this.store.mesAtual}-01`;
+    },
+    abrirModalNovo(data?: string, tipo?: TipoLancamento) {
+      this.modalModo = 'novo';
+      this.modalAlvoId = null;
+      this.modalForm = {
+        tipo: tipo ?? 'saida',
+        data: data ?? this.dataPadraoNoMes(),
+        valor: '',
+        descricao: '',
+        recorrenciaTipo: 'nenhuma',
+        recorrenciaMeses: '3',
+      };
+      this.modalAberto = true;
+    },
+    fecharModal() {
+      this.modalAberto = false;
+      this.modalAlvoId = null;
+    },
+    salvarModal() {
+      const valorCentavos = parseBRLToCentavos(this.modalForm.valor);
+      if (valorCentavos === null || valorCentavos <= 0) return;
+
+      if (this.modalModo === 'novo') {
+        const recorrencia: Recorrencia =
+          this.modalForm.recorrenciaTipo === 'nenhuma'
+            ? 'nenhuma'
+            : this.modalForm.recorrenciaTipo === 'indefinida'
+              ? 'indefinida'
+              : { meses: Math.max(1, Math.round(Number(this.modalForm.recorrenciaMeses) || 1)) };
+        this.store.adicionarLancamentoComRecorrencia({
+          data: this.modalForm.data,
+          tipo: this.modalForm.tipo,
+          valorCentavos,
+          descricao: this.modalForm.descricao,
+          recorrencia,
+        });
+      } else if (this.modalModo === 'editarSerie' && this.modalAlvoId) {
+        this.store.editarSerieAPartir(this.modalAlvoId, this.store.mesAtual, {
+          valorCentavos,
+          descricao: this.modalForm.descricao,
+        });
+      } else if (this.modalModo === 'editarLancamento' && this.modalAlvoId) {
+        this.store.atualizarLancamento(this.modalAlvoId, {
+          tipo: this.modalForm.tipo,
+          data: this.modalForm.data,
+          valorCentavos,
+          descricao: this.modalForm.descricao,
+        });
+      }
+      this.fecharModal();
+    },
+
+    /** Valor pra exibição em input (reais, sem "R$"); vazio quando 0. */
     plain(centavos: number): string {
       return centavos ? formatBRL(centavos).replace('R$', '').trim() : '';
-    },
-    editarRenda(txt: string) {
-      this.store.setRenda(parseBRLToCentavos(txt) ?? 0);
-    },
-    addFixo() {
-      const c = parseBRLToCentavos(this.novoFixo.valor);
-      const nome = this.novoFixo.nome.trim();
-      if (!nome || c === null || c <= 0) return;
-      this.store.addCustoFixo(nome, c);
-      this.novoFixo.nome = '';
-      this.novoFixo.valor = '';
-    },
-    editarFixoNome(id: string, txt: string) {
-      this.store.atualizarCustoFixo(id, { nome: txt });
-    },
-    editarFixoValor(id: string, txt: string) {
-      this.store.atualizarCustoFixo(id, { valorCentavos: parseBRLToCentavos(txt) ?? 0 });
-    },
-    removerFixo(id: string) {
-      this.store.removerCustoFixo(id);
     },
 
     // ---- backup ----
@@ -145,18 +256,17 @@ function app() {
     diaMes(data: string): string {
       return `${data.slice(8, 10)}/${data.slice(5, 7)}`;
     },
-    /** Valor da célula (Saída/Entrada) para edição. */
-    valorCelula(dia: DiaCalculado, tipo: TipoLancamento): string {
+    /** Total avulso (day-exact) da célula, só exibição. */
+    celulaFmt(dia: DiaCalculado, tipo: TipoLancamento): string {
       const c = tipo === 'saida' ? dia.saidasCentavos : dia.entradasCentavos;
-      return this.plain(c);
+      return c ? this.fmt(c) : '—';
     },
-    /** Grava o valor digitado numa célula (texto vazio => remove o dia). */
-    editarCelula(dia: DiaCalculado, tipo: TipoLancamento, texto: string) {
-      const t = texto.trim();
-      const centavos = t === '' ? null : parseBRLToCentavos(t);
-      // texto inválido: ignora (a célula volta pro valor atual no próximo render).
-      if (t !== '' && centavos === null) return;
-      this.store.setValorDia(dia.data, tipo, centavos);
+    celulaTemValor(dia: DiaCalculado, tipo: TipoLancamento): boolean {
+      return (tipo === 'saida' ? dia.saidasCentavos : dia.entradasCentavos) > 0;
+    },
+    /** Clique na célula: abre a modal de novo lançamento pré-preenchida com o dia. */
+    abrirDia(dia: DiaCalculado, tipo: TipoLancamento) {
+      this.abrirModalNovo(dia.data, tipo);
     },
 
     // ---- navegação de mês ----

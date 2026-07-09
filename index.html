@@ -39,44 +39,53 @@
           <div><span>Salário</span><strong x-text="rendaFmt"></strong></div>
           <div><span>Fixos</span><strong x-text="fixosFmt"></strong></div>
           <div><span>Custo/dia</span><strong x-text="custoDiarioFmt"></strong></div>
-          <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
+          <div><span>Saldo inicial</span><strong x-text="saldoInicialFmt"></strong></div>
+          <div class="painel-final"><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
         </section>
 
-        <!-- Botão de config -->
-        <button class="config-toggle" @click="configAberta = !configAberta">
-          <span x-text="configAberta ? '▾ Fechar configuração' : '⚙︎ Salário e custos fixos'"></span>
+        <!-- Botão de lançamentos do mês -->
+        <button class="config-toggle" @click="listaAberta = !listaAberta">
+          <span x-text="listaAberta ? '▾ Fechar lançamentos' : '📋 Lançamentos do mês'"></span>
         </button>
 
-        <!-- Painel de config -->
-        <section class="config" x-show="configAberta" x-cloak>
-          <label class="campo">
-            <span>Salário do mês</span>
-            <input type="text" inputmode="decimal" placeholder="0,00" :value="plain(rendaMes())"
-              @change="editarRenda($event.target.value)" />
-          </label>
+        <!-- Painel: lançamentos do mês (avulsos + séries recorrentes) -->
+        <section class="config" x-show="listaAberta" x-cloak>
+          <button class="btn btn-novo" @click="abrirModalNovo()">+ Novo lançamento</button>
 
-          <div class="fixos">
-            <span class="titulo">Custos fixos</span>
-            <template x-for="f in custosFixos" :key="f.id">
-              <div class="fixo-linha">
-                <input type="text" class="fixo-nome" :value="f.nome"
-                  @change="editarFixoNome(f.id, $event.target.value)" />
-                <input type="text" inputmode="decimal" class="fixo-valor" :value="plain(f.valorCentavos)"
-                  @change="editarFixoValor(f.id, $event.target.value)" />
-                <button class="del" @click="removerFixo(f.id)" aria-label="Remover">×</button>
+          <div class="itens-mes">
+            <template x-for="item in itensMes" :key="item.id">
+              <div class="item-linha" :class="item.tipo">
+                <div class="item-info">
+                  <span class="item-desc" x-text="item.descricao || (item.tipo === 'saida' ? 'Saída' : 'Entrada')"></span>
+                  <span class="item-meta">
+                    <template x-if="item.origem === 'serie'">
+                      <span class="badge">recorrente · <span x-text="serieFimLabel(item)"></span></span>
+                    </template>
+                    <template x-if="item.origem === 'avulso'">
+                      <span x-text="diaMes(item.data)"></span>
+                    </template>
+                  </span>
+                </div>
+                <span class="item-valor" x-text="fmt(item.valorCentavos)"></span>
+                <div class="item-acoes">
+                  <template x-if="item.origem === 'serie'">
+                    <button class="icon" @click="abrirModalEditarSerie(item)" aria-label="Editar">✎</button>
+                  </template>
+                  <template x-if="item.origem === 'avulso'">
+                    <button class="icon" @click="abrirModalEditarLancamento(item)" aria-label="Editar">✎</button>
+                  </template>
+                  <template x-if="item.origem === 'serie'">
+                    <button class="icon del" @click="encerrarSerie(item)" aria-label="Encerrar">×</button>
+                  </template>
+                  <template x-if="item.origem === 'avulso'">
+                    <button class="icon del" @click="removerAvulso(item)" aria-label="Remover">×</button>
+                  </template>
+                </div>
               </div>
             </template>
-            <template x-if="custosFixos.length === 0">
-              <p class="vazio">Nenhum custo fixo ainda.</p>
+            <template x-if="itensMes.length === 0">
+              <p class="vazio">Nenhum lançamento neste mês ainda.</p>
             </template>
-
-            <!-- Adicionar fixo -->
-            <div class="fixo-linha novo">
-              <input type="text" class="fixo-nome" placeholder="nome" x-model="novoFixo.nome" />
-              <input type="text" inputmode="decimal" class="fixo-valor" placeholder="0,00" x-model="novoFixo.valor"
-                @keydown.enter="addFixo()" />
-              <button class="add" @click="addFixo()" aria-label="Adicionar">+</button>
-            </div>
           </div>
 
           <!-- Backup: exportar / importar JSON -->
@@ -98,6 +107,61 @@
           <p class="aviso">⚠️ Custos fixos ≥ salário: sem sobra pra gastar. Ajuste salário ou fixos.</p>
         </template>
 
+        <!-- Modal de lançamento (novo / editar série / editar avulso) -->
+        <div class="modal-backdrop" x-show="modalAberto" x-cloak @click.self="fecharModal()">
+          <div class="modal">
+            <h2 x-text="modalModo === 'novo' ? 'Novo lançamento' : modalModo === 'editarSerie' ? 'Editar série (daqui pra frente)' : 'Editar lançamento'"></h2>
+
+            <div class="tipo-toggle">
+              <button :class="{ ativo: modalForm.tipo === 'saida' }" @click="modalForm.tipo = 'saida'">Saída</button>
+              <button :class="{ ativo: modalForm.tipo === 'entrada' }" @click="modalForm.tipo = 'entrada'">Entrada</button>
+            </div>
+
+            <label class="campo">
+              <span>Valor</span>
+              <input type="text" inputmode="decimal" placeholder="0,00" x-model="modalForm.valor" />
+            </label>
+
+            <label class="campo">
+              <span>Descrição</span>
+              <input type="text" placeholder="ex.: mercado, aluguel…" x-model="modalForm.descricao" />
+            </label>
+
+            <template x-if="modalModo !== 'editarSerie'">
+              <label class="campo">
+                <span>Data</span>
+                <input type="date" x-model="modalForm.data" />
+              </label>
+            </template>
+
+            <template x-if="modalModo === 'novo'">
+              <div class="campo">
+                <span>Recorrência</span>
+                <label class="radio">
+                  <input type="radio" name="recorrencia" value="nenhuma" x-model="modalForm.recorrenciaTipo" />
+                  Não repete
+                </label>
+                <label class="radio">
+                  <input type="radio" name="recorrencia" value="nMeses" x-model="modalForm.recorrenciaTipo" />
+                  Repetir por
+                  <input type="number" min="1" class="input-meses" x-model="modalForm.recorrenciaMeses"
+                    :disabled="modalForm.recorrenciaTipo !== 'nMeses'" />
+                  meses
+                </label>
+                <label class="radio">
+                  <input type="radio" name="recorrencia" value="indefinida" x-model="modalForm.recorrenciaTipo" />
+                  Repetir todo mês até cancelar
+                </label>
+              </div>
+            </template>
+
+            <div class="modal-acoes">
+              <button class="btn" @click="fecharModal()">Cancelar</button>
+              <button class="btn btn-primario" @click="salvarModal()">Salvar</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Planilha diária -->
         <div class="tabela-wrap">
           <table class="planilha">
@@ -116,12 +180,12 @@
                   <td class="c-dia" x-text="d.dia"></td>
                   <td class="c-data" x-text="diaMes(d.data)"></td>
                   <td class="c-num">
-                    <input type="text" inputmode="decimal" class="celula saida" placeholder="—"
-                      :value="valorCelula(d, 'saida')" @change="editarCelula(d, 'saida', $event.target.value)" />
+                    <button type="button" class="celula saida" :class="{ 'tem-valor': celulaTemValor(d, 'saida') }"
+                      @click="abrirDia(d, 'saida')" x-text="celulaFmt(d, 'saida')"></button>
                   </td>
                   <td class="c-num">
-                    <input type="text" inputmode="decimal" class="celula entrada" placeholder="—"
-                      :value="valorCelula(d, 'entrada')" @change="editarCelula(d, 'entrada', $event.target.value)" />
+                    <button type="button" class="celula entrada" :class="{ 'tem-valor': celulaTemValor(d, 'entrada') }"
+                      @click="abrirDia(d, 'entrada')" x-text="celulaFmt(d, 'entrada')"></button>
                   </td>
                   <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
                 </tr>

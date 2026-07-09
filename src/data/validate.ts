@@ -1,5 +1,5 @@
 import { isISODateValida } from './dates.ts';
-import type { AppData, Config, CustoFixo, Lancamento, Mes } from './schema.ts';
+import type { AppData, Config, Lancamento, SerieRecorrente } from './schema.ts';
 
 // Regra 7: validar o JSON no load. Se falhar, o caller cai pra última revisão boa.
 // Validação estrutural após a migração — garante que a forma bate com o schema atual.
@@ -14,34 +14,14 @@ function isCentavos(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v);
 }
 
-function validarCustoFixo(v: unknown, ctx: string): asserts v is CustoFixo {
-  assert(v && typeof v === 'object', `${ctx}: não é objeto`);
-  const c = v as Record<string, unknown>;
-  assert(typeof c.id === 'string' && c.id !== '', `${ctx}.id inválido`);
-  assert(typeof c.nome === 'string', `${ctx}.nome inválido`);
-  assert(isCentavos(c.valorCentavos), `${ctx}.valorCentavos deve ser inteiro`);
+function isMesKey(v: unknown): v is string {
+  return typeof v === 'string' && /^\d{4}-\d{2}$/.test(v);
 }
 
 function validarConfig(v: unknown): asserts v is Config {
   assert(v && typeof v === 'object', 'config: não é objeto');
   const c = v as Record<string, unknown>;
   assert(typeof c.ano === 'number', 'config.ano inválido');
-  assert(isCentavos(c.rendaPadraoCentavos), 'config.rendaPadraoCentavos deve ser inteiro');
-  assert(Array.isArray(c.custosFixosPadrao), 'config.custosFixosPadrao deve ser array');
-  c.custosFixosPadrao.forEach((f, i) => validarCustoFixo(f, `config.custosFixosPadrao[${i}]`));
-}
-
-function validarMes(v: unknown, ctx: string): asserts v is Mes {
-  assert(v && typeof v === 'object', `${ctx}: não é objeto`);
-  const m = v as Record<string, unknown>;
-  assert(
-    m.rendaOverrideCentavos === null || isCentavos(m.rendaOverrideCentavos),
-    `${ctx}.rendaOverrideCentavos deve ser inteiro ou null`,
-  );
-  if (m.custosFixosOverride !== null) {
-    assert(Array.isArray(m.custosFixosOverride), `${ctx}.custosFixosOverride deve ser array ou null`);
-    m.custosFixosOverride.forEach((f, i) => validarCustoFixo(f, `${ctx}.custosFixosOverride[${i}]`));
-  }
 }
 
 function validarLancamento(v: unknown, ctx: string): asserts v is Lancamento {
@@ -59,6 +39,28 @@ function validarLancamento(v: unknown, ctx: string): asserts v is Lancamento {
   assert(typeof l.deleted === 'boolean', `${ctx}.deleted inválido`);
 }
 
+function validarSerie(v: unknown, ctx: string): asserts v is SerieRecorrente {
+  assert(v && typeof v === 'object', `${ctx}: não é objeto`);
+  const s = v as Record<string, unknown>;
+  assert(typeof s.id === 'string' && s.id !== '', `${ctx}.id inválido`);
+  assert(s.tipo === 'entrada' || s.tipo === 'saida', `${ctx}.tipo inválido`);
+  assert(
+    isCentavos(s.valorCentavos) && s.valorCentavos > 0,
+    `${ctx}.valorCentavos deve ser inteiro positivo (o sinal vem do tipo)`,
+  );
+  assert(typeof s.descricao === 'string', `${ctx}.descricao inválida`);
+  assert(isMesKey(s.mesInicio), `${ctx}.mesInicio inválido (esperado YYYY-MM): ${String(s.mesInicio)}`);
+  assert(
+    s.mesFim === null || isMesKey(s.mesFim),
+    `${ctx}.mesFim inválido (esperado YYYY-MM ou null): ${String(s.mesFim)}`,
+  );
+  if (s.mesFim !== null) {
+    assert((s.mesFim as string) >= (s.mesInicio as string), `${ctx}.mesFim é anterior a mesInicio`);
+  }
+  assert(typeof s.updatedAt === 'string', `${ctx}.updatedAt inválido`);
+  assert(typeof s.deleted === 'boolean', `${ctx}.deleted inválido`);
+}
+
 /** Valida a forma completa. Lança ValidationError na primeira falha. */
 export function validarAppData(v: unknown): asserts v is AppData {
   assert(v && typeof v === 'object', 'raiz: não é objeto');
@@ -66,10 +68,10 @@ export function validarAppData(v: unknown): asserts v is AppData {
   assert(typeof d.version === 'number', 'version ausente ou inválida');
   validarConfig(d.config);
 
-  assert(d.meses && typeof d.meses === 'object', 'meses deve ser objeto');
-  for (const [k, m] of Object.entries(d.meses as object)) {
-    assert(/^\d{4}-\d{2}$/.test(k), `chave de mês inválida: ${k}`);
-    validarMes(m, `meses["${k}"]`);
+  assert(d.series && typeof d.series === 'object', 'series deve ser objeto');
+  for (const [k, s] of Object.entries(d.series as object)) {
+    validarSerie(s, `series["${k}"]`);
+    assert((s as SerieRecorrente).id === k, `series["${k}"].id não bate com a chave`);
   }
 
   assert(d.lancamentos && typeof d.lancamentos === 'object', 'lancamentos deve ser objeto');

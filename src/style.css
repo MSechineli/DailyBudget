@@ -91,6 +91,9 @@ main {
 .painel strong {
   font-size: 0.95rem;
 }
+.painel-final {
+  grid-column: 1 / -1;
+}
 
 /* ---- config ---- */
 .config-toggle {
@@ -132,38 +135,169 @@ main {
   font-size: 1rem;
   min-width: 0;
 }
-.fixos .titulo {
-  font-size: 0.75rem;
-  color: var(--muted);
-  display: block;
-  margin-bottom: 6px;
-}
-.fixo-linha {
-  display: grid;
-  grid-template-columns: 1fr 110px 32px;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.fixo-valor {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.fixos .vazio {
+.vazio {
   font-size: 0.8rem;
   color: var(--muted);
   margin: 4px 0;
 }
-.fixo-linha .del,
-.fixo-linha .add {
+
+/* ---- lançamentos do mês ---- */
+.btn {
   background: var(--card2);
+  color: var(--txt);
   border: none;
-  color: var(--muted);
   border-radius: 8px;
-  font-size: 1.1rem;
+  padding: 10px;
+  font-size: 0.9rem;
   cursor: pointer;
 }
-.fixo-linha .add {
+.btn-novo {
+  width: 100%;
   color: var(--accent);
+  font-weight: 700;
+}
+.itens-mes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.item-linha {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  background: var(--card2);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.item-desc {
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.badge {
+  color: var(--accent);
+}
+.item-valor {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.item-linha.saida .item-valor {
+  color: var(--vermelho);
+}
+.item-linha.entrada .item-valor {
+  color: var(--verde);
+}
+.item-acoes {
+  display: flex;
+  gap: 4px;
+}
+.item-acoes .icon {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+.item-acoes .icon.del {
+  color: var(--vermelho);
+}
+
+/* ---- modal ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 10;
+}
+.modal {
+  background: var(--card);
+  border-radius: 16px 16px 0 0;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.tipo-toggle {
+  display: flex;
+  gap: 8px;
+}
+.tipo-toggle button {
+  flex: 1;
+  background: var(--card2);
+  color: var(--muted);
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tipo-toggle button.ativo {
+  color: var(--txt);
+}
+.tipo-toggle button:first-child.ativo {
+  background: color-mix(in srgb, var(--vermelho) 30%, var(--card2));
+}
+.tipo-toggle button:last-child.ativo {
+  background: color-mix(in srgb, var(--verde) 30%, var(--card2));
+}
+.modal input[type='text'],
+.modal input[type='date'],
+.modal input[type='number'] {
+  background: var(--card2);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 1rem;
+  width: 100%;
+}
+.modal .radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  margin-top: 6px;
+}
+.input-meses {
+  width: 56px !important;
+  text-align: center;
+}
+.modal-acoes {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.modal-acoes .btn {
+  flex: 1;
+  text-align: center;
+}
+.btn-primario {
+  background: var(--accent);
+  color: #0f172a;
   font-weight: 700;
 }
 
@@ -248,26 +382,24 @@ main {
   width: 88px;
   background: transparent;
   border: none;
-  color: var(--txt);
+  color: var(--muted);
   text-align: right;
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
   padding: 4px 2px;
   border-radius: 6px;
+  cursor: pointer;
 }
-.celula:focus {
+.celula:focus,
+.celula:hover {
   outline: none;
   background: var(--card2);
 }
-.celula.saida {
+.celula.saida.tem-valor {
   color: var(--vermelho);
 }
-.celula.entrada {
+.celula.entrada.tem-valor {
   color: var(--verde);
-}
-.celula::placeholder {
-  color: var(--muted);
-  opacity: 0.5;
 }
 .planilha .saldo {
   font-weight: 600;

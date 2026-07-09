@@ -49,6 +49,23 @@ export function isISODateValida(v: unknown): v is ISODate {
   return mes >= 1 && mes <= 12 && dia >= 1 && dia <= diasNoMes(ano, mes);
 }
 
+/** Soma (ou subtrai) `delta` meses a uma MesKey "YYYY-MM". */
+export function adicionarMeses(mk: MesKey, delta: number): MesKey {
+  const { ano, mes } = parseMesKey(mk);
+  const total = ano * 12 + (mes - 1) + delta;
+  return toMesKey(Math.floor(total / 12), (total % 12) + 1);
+}
+
+/** Mês anterior a `mk`. */
+export function mesAnterior(mk: MesKey): MesKey {
+  return adicionarMeses(mk, -1);
+}
+
+/** Mês seguinte a `mk`. */
+export function mesSeguinte(mk: MesKey): MesKey {
+  return adicionarMeses(mk, 1);
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }

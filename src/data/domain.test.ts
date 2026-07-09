@@ -27,13 +27,15 @@ describe('budgetAcumCentavos (proporcional, sem drift)', () => {
   });
 });
 
-describe('calcularMes — exemplo trabalhado do DOMINIO', () => {
+describe('calcularMes — exemplo trabalhado do DOMINIO (replanejamento por evento)', () => {
   // renda 400000, fixos 100000 → sobra 300000; mês de 30 dias (2026-09).
+  // Cada lançamento é um evento: seu valor é dividido pelos dias restantes do
+  // mês A PARTIR do dia em que aconteceu (inclusive), não bate tudo de uma vez.
   const resumo: ResumoMes = montarResumoMes(2026, 9, 400000, 100000);
   const lancamentos: Lancamento[] = [
-    lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
-    lanc({ data: '2026-09-03', tipo: 'entrada', valorCentavos: 15000 }),
-    lanc({ data: '2026-09-04', tipo: 'saida', valorCentavos: 5000 }),
+    lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }), // -25000/30 = -833,33/dia
+    lanc({ data: '2026-09-03', tipo: 'entrada', valorCentavos: 15000 }), // +15000/28 = +535,71/dia
+    lanc({ data: '2026-09-04', tipo: 'saida', valorCentavos: 5000 }), // -5000/27 = -185,19/dia
   ];
   const dias = calcularMes(2026, 9, resumo, lancamentos);
 
@@ -43,26 +45,26 @@ describe('calcularMes — exemplo trabalhado do DOMINIO', () => {
     expect(dias).toHaveLength(30);
   });
 
-  it('bate a tabela esperada dia a dia', () => {
-    // [budgetAcum, entradaDia, saidaDia, saldo, status, diasNoVermelho]
-    const esperado: Array<[number, number, number, number, string, number]> = [
-      [10000, 0, 25000, -15000, 'vermelho', 2],
-      [20000, 0, 0, -5000, 'vermelho', 1],
-      [30000, 15000, 0, 20000, 'verde', 0],
-      [40000, 0, 5000, 25000, 'verde', 0],
-      [50000, 0, 0, 35000, 'verde', 0],
+  it('bate a tabela esperada dia a dia — nenhum lançamento bate de uma vez só', () => {
+    // [entradaDia, saidaDia, saldo, status]
+    const esperado: Array<[number, number, number, string]> = [
+      [0, 25000, 9167, 'verde'],
+      [0, 0, 18333, 'verde'],
+      [15000, 0, 28036, 'verde'],
+      [0, 5000, 37553, 'verde'],
+      [0, 0, 47070, 'verde'],
     ];
-    esperado.forEach(([budget, ent, sai, saldo, status, dv], i) => {
+    esperado.forEach(([ent, sai, saldo, status], i) => {
       const d = dias[i]!;
-      expect([d.budgetAcumCentavos, d.entradasCentavos, d.saidasCentavos, d.saldoCentavos, d.status, d.diasNoVermelho])
-        .toEqual([budget, ent, sai, saldo, status, dv]);
+      expect([d.entradasCentavos, d.saidasCentavos, d.saldoCentavos, d.status]).toEqual([
+        ent, sai, saldo, status,
+      ]);
     });
   });
 
-  it('dia 30 fecha o mês: budget 300000, saldo 285000', () => {
+  it('dia 30 fecha o mês exato: saldo = sobra + entradas − saídas', () => {
     const d30 = dias[29]!;
-    expect(d30.budgetAcumCentavos).toBe(300000);
-    expect(d30.saldoCentavos).toBe(285000);
+    expect(d30.saldoCentavos).toBe(285000); // 300000 + 15000 - 30000
     expect(d30.status).toBe('verde');
   });
 
@@ -73,26 +75,34 @@ describe('calcularMes — exemplo trabalhado do DOMINIO', () => {
 });
 
 describe('calcularMes — casos de borda', () => {
-  it('recuperação por tempo: só um gasto no dia 1 volta ao verde no dia 3', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000, 30 dias
+  it('replaneja sempre: um gasto grande no dia 1 arrasta o mês pro vermelho até uma entrada corrigir', () => {
+    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000, taxa base 10000/dia, 30 dias
     const dias = calcularMes(2026, 9, resumo, [
-      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
+      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 310000 }), // maior que a sobra inteira
+      lanc({ data: '2026-09-15', tipo: 'entrada', valorCentavos: 200000 }), // corrige a partir daqui
     ]);
+    // dia 1: taxa do evento = -310000/30 = -10333,33; 10000 - 10333,33 = -333,33 → vermelho
+    expect(dias[0]!.saldoCentavos).toBe(-333);
     expect(dias[0]!.status).toBe('vermelho');
-    expect(dias[1]!.status).toBe('vermelho');
-    expect(dias[2]!.status).toBe('verde');
-    expect(dias.slice(2).every((d) => d.status === 'verde')).toBe(true);
+    // sem outra correção, o mês continua caindo (a taxa diária ficou negativa)
+    expect(dias[13]!.status).toBe('vermelho'); // dia 14, ainda sem a entrada do dia 15
+    // dia 15: a entrada de 200000/16 dias passa a valer, taxa diária volta a ficar positiva
+    expect(dias[14]!.saldoCentavos).toBe(7500);
+    expect(dias[14]!.status).toBe('verde');
+    // e o mês fecha exato: 300000 - 310000 + 200000 = 190000
+    expect(dias[29]!.saldoCentavos).toBe(190000);
   });
 
-  it('recuperação por entrada: entrada no mesmo dia já fica verde', () => {
+  it('mesmo dia: entrada e saída se combinam num único evento líquido', () => {
     const resumo = montarResumoMes(2026, 9, 300000, 0);
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
       lanc({ data: '2026-09-01', tipo: 'entrada', valorCentavos: 20000 }),
     ]);
-    // 10000 + 20000 - 25000 = 5000
-    expect(dias[0]!.saldoCentavos).toBe(5000);
-    expect(dias[0]!.status).toBe('verde');
+    const soComSaida = calcularMes(2026, 9, resumo, [
+      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 5000 }), // líquido: 20000-25000 = -5000
+    ]);
+    expect(dias[0]!.saldoCentavos).toBe(soComSaida[0]!.saldoCentavos);
   });
 
   it('sobra negativa: tudo vermelho e diasNoVermelho = 0', () => {
@@ -103,12 +113,10 @@ describe('calcularMes — casos de borda', () => {
   });
 
   it('saldo exatamente 0 é verde', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
-    const dias = calcularMes(2026, 9, resumo, [
-      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 10000 }), // = budget do dia 1
-    ]);
-    expect(dias[0]!.saldoCentavos).toBe(0);
-    expect(dias[0]!.status).toBe('verde');
+    const resumo = montarResumoMes(2026, 9, 0, 0); // sobra 0, sem lançamentos
+    const dias = calcularMes(2026, 9, resumo, []);
+    expect(dias.every((d) => d.saldoCentavos === 0)).toBe(true);
+    expect(dias.every((d) => d.status === 'verde')).toBe(true);
   });
 
   it('fevereiro tem 28 dias; ano bissexto 29', () => {
@@ -136,18 +144,49 @@ describe('calcularMes — casos de borda', () => {
 
 describe('agregarMes (resumo anual)', () => {
   it('soma totais e conta dias no vermelho; saldo final = último dia', () => {
-    const resumo = montarResumoMes(2026, 9, 400000, 100000); // sobra 300000
+    const resumo = montarResumoMes(2026, 9, 300000, 0);
     const dias = calcularMes(2026, 9, resumo, [
-      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
-      lanc({ data: '2026-09-03', tipo: 'entrada', valorCentavos: 15000 }),
-      lanc({ data: '2026-09-04', tipo: 'saida', valorCentavos: 5000 }),
+      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 310000 }),
+      lanc({ data: '2026-09-15', tipo: 'entrada', valorCentavos: 200000 }),
     ]);
-    const ag = agregarMes(dias, resumo);
-    expect(ag.totalEntradasCentavos).toBe(15000);
-    expect(ag.totalSaidasCentavos).toBe(30000);
-    // 300000 + 15000 - 30000 = 285000 = saldo do último dia
-    expect(ag.saldoFinalCentavos).toBe(285000);
+    const ag = agregarMes(dias);
+    expect(ag.totalEntradasCentavos).toBe(200000);
+    expect(ag.totalSaidasCentavos).toBe(310000);
+    expect(ag.saldoFinalCentavos).toBe(190000);
     expect(ag.saldoFinalCentavos).toBe(dias[dias.length - 1]!.saldoCentavos);
-    expect(ag.diasNoVermelho).toBe(2); // dias 1 e 2
+    expect(ag.diasNoVermelho).toBe(14); // dias 1 a 14, antes da entrada do dia 15
+  });
+});
+
+describe('calcularMes — saldoInicialCentavos (rollover do mês anterior)', () => {
+  it('sem saldo inicial (padrão), comporta-se como antes', () => {
+    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const dias = calcularMes(2026, 9, resumo, []);
+    expect(dias[0]!.saldoCentavos).toBe(10000);
+  });
+
+  it('divide sobra + saldo inicial pelos dias — não aparece inteiro já no dia 1', () => {
+    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000, 30 dias
+    const dias = calcularMes(2026, 9, resumo, [], 50000);
+    // base 350000 / 30 dias: mesma fórmula proporcional de sempre, só que
+    // somando o herdado à sobra ANTES de dividir — não depois.
+    expect(dias[0]!.budgetAcumCentavos).toBe(11667); // round(350000*1/30)
+    expect(dias[0]!.saldoCentavos).toBe(11667);
+    expect(dias[0]!.saldoCentavos).not.toBe(50000); // não é o valor cheio já no dia 1
+    expect(dias[29]!.saldoCentavos).toBe(350000); // fecha exato: sobra + herdado
+  });
+
+  it('saldo inicial negativo (mês anterior fechou no vermelho) também entra na divisão', () => {
+    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000
+    const dias = calcularMes(2026, 9, resumo, [], -350000); // base = -50000
+    expect(dias[0]!.saldoCentavos).toBe(Math.round((-50000 * 1) / 30)); // -1667
+    expect(dias[0]!.status).toBe('vermelho');
+    expect(dias[29]!.saldoCentavos).toBe(-50000); // fecha exato
+  });
+
+  it('agregarMes propaga o saldo inicial (já suavizado) pro saldoFinalCentavos', () => {
+    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const dias = calcularMes(2026, 9, resumo, [], 50000);
+    expect(agregarMes(dias).saldoFinalCentavos).toBe(350000);
   });
 });
