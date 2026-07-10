@@ -149,6 +149,45 @@ main {
   stop-color: var(--vermelho);
 }
 
+/* ---- resumo: renda − contas = sobra livre ---- */
+.resumo {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.resumo-linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 0.9rem;
+}
+.resumo-linha span {
+  color: var(--muted);
+}
+.resumo-linha strong {
+  font-variant-numeric: tabular-nums;
+}
+.resumo-linha strong.neg {
+  color: var(--vermelho);
+}
+.resumo-linha.total {
+  border-top: 1px solid var(--card2);
+  margin-top: 4px;
+  padding-top: 8px;
+}
+.resumo-linha.total span {
+  color: var(--txt);
+}
+.resumo-linha.total strong {
+  font-size: 1.05rem;
+  color: var(--verde);
+}
+.resumo-linha.total strong.negativo {
+  color: var(--vermelho);
+}
+
 .painel {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -263,6 +302,14 @@ main {
 .badge {
   color: var(--accent);
 }
+.badge.conta {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 4px;
+  font-weight: 600;
+}
 .item-valor {
   font-variant-numeric: tabular-nums;
   font-size: 0.9rem;
@@ -338,6 +385,29 @@ main {
 }
 .tipo-toggle button:last-child.ativo {
   background: color-mix(in srgb, var(--verde) 30%, var(--card2));
+}
+.cat-toggle {
+  display: flex;
+  gap: 8px;
+}
+.cat-toggle button {
+  flex: 1;
+  background: var(--card2);
+  color: var(--muted);
+  border: none;
+  border-radius: 8px;
+  padding: 9px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cat-toggle button.ativo {
+  color: var(--txt);
+  background: color-mix(in srgb, var(--accent) 28%, var(--card2));
+}
+.cat-dica {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin: 6px 0 0;
 }
 .modal input[type='text'],
 .modal input[type='date'],

@@ -3,11 +3,12 @@ import { Store, type Recorrencia } from './store.ts';
 import {
   agregadoMesDe,
   calcularMesDe,
+  contasDoMes,
   custoDiarioMedio,
   itensDoMes,
   rendaMes,
+  resumoMesDe,
   saldoInicialMes,
-  totalFixosMes,
   type ItemMes,
 } from './data/derive.ts';
 import type { DiaCalculado } from './data/domain.ts';
@@ -20,6 +21,7 @@ type ModalModo = 'novo' | 'editarSerie' | 'editarLancamento';
 
 interface ModalForm {
   tipo: TipoLancamento;
+  categoria: 'conta' | 'gasto'; // só usado em saída avulsa
   data: string; // 'YYYY-MM-DD'
   valor: string; // texto BRL, ex.: "19,90"
   descricao: string;
@@ -46,6 +48,7 @@ function app() {
     modalAlvoId: null as string | null,
     modalForm: {
       tipo: 'saida',
+      categoria: 'gasto',
       data: hojeISO(),
       valor: '',
       descricao: '',
@@ -77,8 +80,18 @@ function app() {
     get rendaFmt(): string {
       return this.pronto ? formatBRL(rendaMes(this.store.dados, this.store.mesAtual)) : '—';
     },
-    get fixosFmt(): string {
-      return this.pronto ? formatBRL(totalFixosMes(this.store.dados, this.store.mesAtual)) : '—';
+    /** Total das contas do mês (fixas + variáveis). */
+    get contasFmt(): string {
+      return this.pronto ? formatBRL(contasDoMes(this.store.dados, this.store.mesAtual)) : '—';
+    },
+    /** Sobra livre = renda − contas. É o bolo que vira budget diário. */
+    get sobraLivreFmt(): string {
+      if (!this.pronto) return '—';
+      return formatBRL(resumoMesDe(this.store.dados, this.store.mesAtual).sobraCentavos);
+    },
+    get sobraLivreVermelha(): boolean {
+      if (!this.pronto) return false;
+      return resumoMesDe(this.store.dados, this.store.mesAtual).sobraCentavos < 0;
     },
     get custoDiarioFmt(): string {
       if (!this.pronto) return '—';
@@ -134,6 +147,7 @@ function app() {
       this.modalAlvoId = item.id;
       this.modalForm = {
         tipo: item.tipo,
+        categoria: 'gasto',
         data: this.store.mesAtual + '-01',
         valor: this.plain(item.valorCentavos),
         descricao: item.descricao,
@@ -148,6 +162,7 @@ function app() {
       this.modalAlvoId = item.id;
       this.modalForm = {
         tipo: item.tipo,
+        categoria: item.categoria,
         data: item.data,
         valor: this.plain(item.valorCentavos),
         descricao: item.descricao,
@@ -177,6 +192,7 @@ function app() {
       this.modalAlvoId = null;
       this.modalForm = {
         tipo: tipo ?? 'saida',
+        categoria: 'gasto',
         data: data ?? this.dataPadraoNoMes(),
         valor: '',
         descricao: '',
@@ -203,6 +219,7 @@ function app() {
         this.store.adicionarLancamentoComRecorrencia({
           data: this.modalForm.data,
           tipo: this.modalForm.tipo,
+          categoria: this.modalForm.categoria,
           valorCentavos,
           descricao: this.modalForm.descricao,
           recorrencia,
@@ -215,6 +232,7 @@ function app() {
       } else if (this.modalModo === 'editarLancamento' && this.modalAlvoId) {
         this.store.atualizarLancamento(this.modalAlvoId, {
           tipo: this.modalForm.tipo,
+          categoria: this.modalForm.tipo === 'saida' ? this.modalForm.categoria : 'gasto',
           data: this.modalForm.data,
           valorCentavos,
           descricao: this.modalForm.descricao,

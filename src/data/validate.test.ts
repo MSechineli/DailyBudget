@@ -8,6 +8,7 @@ function comLancamento() {
     id: 'lanc_1',
     data: '2026-01-05',
     tipo: 'saida',
+    categoria: 'gasto',
     valorCentavos: 3000,
     descricao: 'mercado',
     updatedAt: '2026-01-05T14:30:00.000Z',
@@ -71,6 +72,12 @@ describe('validarAppData', () => {
     const d = comLancamento();
     (d.lancamentos['lanc_1'] as any).tipo = 'transferencia';
     expect(() => validarAppData(d)).toThrow(/tipo/);
+  });
+
+  it('rejeita categoria desconhecida', () => {
+    const d = comLancamento();
+    (d.lancamentos['lanc_1'] as any).categoria = 'investimento';
+    expect(() => validarAppData(d)).toThrow(/categoria/);
   });
 
   it('rejeita id que não bate com a chave do map', () => {

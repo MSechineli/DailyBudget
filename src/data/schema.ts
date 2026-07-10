@@ -6,11 +6,23 @@ import type { ISODate, MesKey } from './dates.ts';
 // v3: remove config de renda/custos fixos "pra sempre"; salário e gastos
 // fixos viram séries recorrentes (mesma coisa que qualquer outro lançamento,
 // só que com uma janela de meses em vez de uma data única).
-export const SCHEMA_VERSION = 3;
+// v4: saída avulsa ganha `categoria` (conta vs gasto). Conta = débito do bolo
+// do mês (entra na sobra livre, não vira vermelho); gasto = débito imediato
+// do dia a dia. Ver DOMINIO.md.
+export const SCHEMA_VERSION = 4;
 
 // Entrada = dinheiro que ENTRA; Saída = dinheiro que SAI. valorCentavos é
 // sempre positivo — o sinal vem do tipo.
 export type TipoLancamento = 'entrada' | 'saida';
+
+// Categoria de uma saída avulsa:
+// - 'conta': conta do mês (aluguel, cartão, luz). Debita do bolo → entra na
+//   sobra livre (renda − contas), não aparece como evento diário nem vira
+//   vermelho.
+// - 'gasto': gasto discricionário do dia a dia. Debita imediato no dia; pode
+//   deixar o saldo no vermelho.
+// Em entradas o campo é ignorado (gravado como 'gasto' por default).
+export type CategoriaLancamento = 'conta' | 'gasto';
 
 export interface Config {
   ano: number;
@@ -20,6 +32,7 @@ export interface Lancamento {
   id: string;
   data: ISODate;
   tipo: TipoLancamento;
+  categoria: CategoriaLancamento;
   valorCentavos: number;
   descricao: string;
   updatedAt: string; // ISO timestamp (aqui timestamp faz sentido: é metadado de edição)

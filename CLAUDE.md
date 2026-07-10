@@ -4,13 +4,14 @@ Contexto e decisões de arquitetura deste projeto. Leia antes de escrever códig
 
 ## O que é
 
-App pessoal de **orçamento diário rolante**: responde "quanto posso gastar hoje/na
-semana". Você ganha um custo diário de budget; gastos descontam na hora, recebimentos
+App pessoal de **orçamento diário rolante**: organiza o que sobra depois das contas do
+mês e responde "quanto posso gastar hoje/na semana". Renda − contas = sobra livre → vira
+o custo diário; gastos do dia descontam na hora, contas debitam do bolo, recebimentos
 diluem, e o saldo rola de um mês pro outro.
 
-**A regra de negócio (fórmulas de saldo, séries recorrentes, rollover, "posso gastar")
-vive em `DOMINIO.md` — leia lá antes de mexer em `domain.ts`/`derive.ts`.** Este
-arquivo é só arquitetura, stack e convenções.
+**A regra de negócio (sobra livre, conta vs gasto, fórmulas de saldo, séries, rollover,
+"posso gastar") vive em `DOMINIO.md` — leia lá antes de mexer em `domain.ts`/`derive.ts`.**
+Este arquivo é só arquitetura, stack e convenções.
 
 ## Arquitetura (sem servidor)
 
@@ -55,7 +56,7 @@ arquivo é só arquitetura, stack e convenções.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "config": {
     "ano": 2026
   },
@@ -86,6 +87,7 @@ arquivo é só arquitetura, stack e convenções.
       "id": "lanc_abc123",
       "data": "2026-01-05",
       "tipo": "saida",
+      "categoria": "gasto",
       "valorCentavos": 3000,
       "descricao": "mercado",
       "updatedAt": "2026-01-05T14:30:00.000Z",
@@ -115,6 +117,9 @@ arquivo é só arquitetura, stack e convenções.
 - **`tipo`** (em `Lancamento` e `SerieRecorrente`): `"entrada"` (dinheiro que entra) |
   `"saida"` (dinheiro que sai). `valorCentavos` é sempre positivo; o sinal vem do
   `tipo`. Ver `DOMINIO.md`.
+- **`categoria`** (só em `Lancamento`): `"conta"` (conta do mês, debita do bolo → sobra
+  livre) | `"gasto"` (gasto do dia, débito imediato). Só importa em saída; entrada grava
+  `"gasto"` (ignorado). Série de saída é sempre conta (não tem o campo). Ver `DOMINIO.md`.
 - **`sync.driveFileId`**: guardado localmente pra reencontrar o arquivo no Drive.
   No primeiro boot, se não tiver fileId, procurar por nome/`appProperties` (o escopo
   `drive.file` lista arquivos que o próprio app criou) antes de criar um novo — evita duplicata.

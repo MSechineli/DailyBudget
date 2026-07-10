@@ -69,7 +69,7 @@ describe('migrar', () => {
 
     it('renda padrão vira uma série de entrada indefinida a partir de janeiro do ano', () => {
       const migrado = migrar(v2({ rendaPadraoCentavos: 400000, custosFixosPadrao: [] }));
-      expect(migrado.version).toBe(3);
+      expect(migrado.version).toBe(SCHEMA_VERSION);
       expect((migrado as any).meses).toBeUndefined();
       const series = Object.values(migrado.series);
       expect(series).toHaveLength(1);
@@ -121,6 +121,31 @@ describe('migrar', () => {
       expect(porInicio['2026-01']).toMatchObject({ mesFim: '2026-05', valorCentavos: 400000 });
       expect(porInicio['2026-06']).toMatchObject({ mesFim: '2026-06', valorCentavos: 500000 });
       expect(porInicio['2026-07']).toMatchObject({ mesFim: null, valorCentavos: 400000 });
+    });
+  });
+
+  describe('v3 → v4: lançamento ganha categoria', () => {
+    it('adiciona categoria "gasto" a todo lançamento existente', () => {
+      const v3 = {
+        version: 3,
+        config: { ano: 2026 },
+        series: {},
+        lancamentos: {
+          a: {
+            id: 'a',
+            data: '2026-07-05',
+            tipo: 'saida',
+            valorCentavos: 3000,
+            descricao: 'mercado',
+            updatedAt: '2026-07-05T00:00:00.000Z',
+            deleted: false,
+          },
+        },
+        sync: { driveFileId: null, lastSyncedHash: null },
+      };
+      const migrado = migrar(v3);
+      expect(migrado.version).toBe(SCHEMA_VERSION);
+      expect(migrado.lancamentos['a']!.categoria).toBe('gasto');
     });
   });
 });

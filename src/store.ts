@@ -13,6 +13,7 @@ import {
 import {
   novoId,
   type AppData,
+  type CategoriaLancamento,
   type Lancamento,
   type SerieRecorrente,
   type TipoLancamento,
@@ -97,11 +98,14 @@ export class Store {
     tipo: TipoLancamento;
     valorCentavos: number;
     descricao: string;
+    categoria?: CategoriaLancamento;
   }): Lancamento {
     const l: Lancamento = {
       id: novoId('lanc'),
       data: input.data,
       tipo: input.tipo,
+      // Categoria só importa em saída; entrada grava 'gasto' (ignorado no cálculo).
+      categoria: input.tipo === 'saida' ? (input.categoria ?? 'gasto') : 'gasto',
       valorCentavos: input.valorCentavos,
       descricao: input.descricao.trim(),
       updatedAt: new Date().toISOString(),
@@ -171,12 +175,15 @@ export class Store {
     tipo: TipoLancamento;
     valorCentavos: number;
     descricao: string;
+    categoria?: CategoriaLancamento;
     recorrencia: Recorrencia;
   }): void {
     if (input.recorrencia === 'nenhuma') {
+      // Avulso: carrega a categoria (conta/gasto) escolhida na modal.
       this.adicionarLancamento(input);
       return;
     }
+    // Saída recorrente vira série (conta fixa implícita) — categoria não se aplica.
     this.adicionarSerie({
       tipo: input.tipo,
       valorCentavos: input.valorCentavos,

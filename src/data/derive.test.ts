@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   agregadoMesDe,
   calcularMesDe,
+  contasDoMes,
+  contasSeriesMes,
   custoDiarioMedio,
-  fixosMes,
   itensDoMes,
   lancamentosDoMes,
   rendaMes,
   resumoMesDe,
   saldoInicialMes,
   seriesAtivasNoMes,
-  totalFixosMes,
 } from './derive.ts';
 import { criarDadosVazios, type AppData, type Lancamento, type SerieRecorrente } from './schema.ts';
 
@@ -39,7 +39,13 @@ function base(): AppData {
 function lanc(
   p: Pick<Lancamento, 'id' | 'data' | 'tipo' | 'valorCentavos'> & Partial<Lancamento>,
 ): Lancamento {
-  return { descricao: '', updatedAt: '2026-01-01T00:00:00.000Z', deleted: false, ...p };
+  return {
+    categoria: 'gasto',
+    descricao: '',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    deleted: false,
+    ...p,
+  };
 }
 
 describe('seriesAtivasNoMes', () => {
@@ -74,18 +80,30 @@ describe('seriesAtivasNoMes', () => {
   });
 });
 
-describe('rendaMes / fixosMes / totalFixosMes', () => {
+describe('rendaMes / contasSeriesMes / contasDoMes', () => {
   it('somam as séries ativas do mês', () => {
     const d = base();
     expect(rendaMes(d, '2026-09')).toBe(400000);
-    expect(totalFixosMes(d, '2026-09')).toBe(100000);
-    expect(fixosMes(d, '2026-09')).toHaveLength(1);
+    expect(contasDoMes(d, '2026-09')).toBe(100000);
+    expect(contasSeriesMes(d, '2026-09')).toHaveLength(1);
+  });
+
+  it('contasDoMes inclui séries de saída + saídas avulsas marcadas conta', () => {
+    const d = base();
+    d.lancamentos = {
+      cartao: lanc({ id: 'cartao', data: '2026-09-10', tipo: 'saida', valorCentavos: 50000, categoria: 'conta' }),
+      mercado: lanc({ id: 'mercado', data: '2026-09-11', tipo: 'saida', valorCentavos: 8000, categoria: 'gasto' }),
+    };
+    // aluguel (série 100000) + cartão avulso conta (50000); mercado (gasto) fora
+    expect(contasDoMes(d, '2026-09')).toBe(150000);
+    // sobra livre = renda 400000 − contas 150000
+    expect(resumoMesDe(d, '2026-09').sobraCentavos).toBe(250000);
   });
 
   it('zero quando não há série ativa', () => {
     const d = criarDadosVazios(2026);
     expect(rendaMes(d, '2026-09')).toBe(0);
-    expect(totalFixosMes(d, '2026-09')).toBe(0);
+    expect(contasDoMes(d, '2026-09')).toBe(0);
   });
 });
 
@@ -121,6 +139,63 @@ describe('calcularMesDe / agregadoMesDe', () => {
     const ag = agregadoMesDe(d, '2026-09');
     expect(ag.totalSaidasCentavos).toBe(30000);
     expect(ag.diasNoVermelho).toBe(2);
+  });
+});
+
+describe('conta vs gasto (o coração do ajuste)', () => {
+  function base09(): AppData {
+    const d = base(); // salário 400000 + aluguel 100000 (série = conta fixa)
+    d.series['salario']!.mesInicio = '2026-09';
+    d.series['aluguel']!.mesInicio = '2026-09';
+    return d;
+  }
+
+  it('conta avulsa entra na sobra livre e NÃO vira evento diário (não fica vermelho)', () => {
+    const d = base09();
+    d.lancamentos = {
+      cartao: lanc({ id: 'cartao', data: '2026-09-10', tipo: 'saida', valorCentavos: 60000, categoria: 'conta' }),
+    };
+    // sobra livre = 400000 − (100000 aluguel + 60000 cartão) = 240000 → 8000/dia
+    const dias = calcularMesDe(d, '2026-09');
+    expect(dias[0]!.saldoCentavos).toBe(8000);
+    expect(dias.every((x) => x.status === 'verde')).toBe(true); // conta não derruba
+    expect(dias[9]!.saidasCentavos).toBe(0); // dia 10 não mostra a conta como saída do dia
+    expect(dias[29]!.saldoCentavos).toBe(240000); // fecha na sobra livre
+  });
+
+  it('gasto avulso vira evento diário imediato (pode ficar vermelho)', () => {
+    const d = base09();
+    d.lancamentos = {
+      compra: lanc({ id: 'compra', data: '2026-09-01', tipo: 'saida', valorCentavos: 60000, categoria: 'gasto' }),
+    };
+    // sobra livre = 400000 − 100000 = 300000 → 10000/dia
+    const dias = calcularMesDe(d, '2026-09');
+    expect(dias[0]!.saldoCentavos).toBe(-50000); // 10000 − 60000, bate cheio
+    expect(dias[0]!.status).toBe('vermelho');
+    expect(dias[0]!.saidasCentavos).toBe(60000);
+  });
+
+  it('rollover: conta avulsa é contada uma vez só (via sobra), não dobra', () => {
+    const d = base09();
+    d.lancamentos = {
+      cartao: lanc({ id: 'cartao', data: '2026-09-10', tipo: 'saida', valorCentavos: 60000, categoria: 'conta' }),
+    };
+    // setembro fecha na sobra livre 240000; outubro herda exatamente isso
+    expect(saldoInicialMes(d, '2026-10')).toBe(240000);
+  });
+
+  it('itensDoMes marca ehConta (série de saída e avulso conta) e não os gastos/entradas', () => {
+    const d = base09();
+    d.lancamentos = {
+      cartao: lanc({ id: 'cartao', data: '2026-09-10', tipo: 'saida', valorCentavos: 60000, categoria: 'conta' }),
+      mercado: lanc({ id: 'mercado', data: '2026-09-11', tipo: 'saida', valorCentavos: 8000, categoria: 'gasto' }),
+    };
+    const itens = itensDoMes(d, '2026-09');
+    const conta = (id: string) => itens.find((i) => i.id === id)!.ehConta;
+    expect(conta('aluguel')).toBe(true); // série de saída
+    expect(conta('cartao')).toBe(true); // avulso conta
+    expect(conta('mercado')).toBe(false); // gasto
+    expect(conta('salario')).toBe(false); // entrada
   });
 });
 

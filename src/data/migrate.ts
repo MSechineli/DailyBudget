@@ -119,6 +119,20 @@ const passos: Record<number, PassoMigracao> = {
       sync: d.sync ?? { driveFileId: null, lastSyncedHash: null },
     };
   },
+
+  // v3 → v4: saída avulsa ganha `categoria`. Default 'gasto' pra todo lançamento
+  // existente (preserva o comportamento atual: saída avulsa = débito imediato).
+  // O usuário re-marca como 'conta' o que for conta do mês.
+  3: (d: any) => ({
+    ...d,
+    version: 4,
+    lancamentos: Object.fromEntries(
+      Object.entries(d.lancamentos ?? {}).map(([id, l]: [string, any]) => [
+        id,
+        { ...l, categoria: l.categoria ?? 'gasto' },
+      ]),
+    ),
+  }),
 };
 
 /**

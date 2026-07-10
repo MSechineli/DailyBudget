@@ -30,6 +30,7 @@ function validarLancamento(v: unknown, ctx: string): asserts v is Lancamento {
   assert(typeof l.id === 'string' && l.id !== '', `${ctx}.id inválido`);
   assert(isISODateValida(l.data), `${ctx}.data inválida (esperado YYYY-MM-DD): ${String(l.data)}`);
   assert(l.tipo === 'entrada' || l.tipo === 'saida', `${ctx}.tipo inválido`);
+  assert(l.categoria === 'conta' || l.categoria === 'gasto', `${ctx}.categoria inválida`);
   assert(
     isCentavos(l.valorCentavos) && l.valorCentavos > 0,
     `${ctx}.valorCentavos deve ser inteiro positivo (o sinal vem do tipo)`,

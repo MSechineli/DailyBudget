@@ -85,6 +85,29 @@ describe('adicionarLancamentoComRecorrencia', () => {
     expect(seriesVivas(s)).toHaveLength(0);
   });
 
+  it('grava a categoria escolhida na saída avulsa (conta vs gasto)', () => {
+    const s = store();
+    s.adicionarLancamentoComRecorrencia({
+      data: '2026-07-05', tipo: 'saida', categoria: 'conta', valorCentavos: 120000, descricao: 'cartão',
+      recorrencia: 'nenhuma',
+    });
+    expect(vivos(s)[0]!.categoria).toBe('conta');
+  });
+
+  it('saída avulsa sem categoria explícita cai em "gasto"; entrada sempre "gasto"', () => {
+    const s = store();
+    s.adicionarLancamentoComRecorrencia({
+      data: '2026-07-05', tipo: 'saida', valorCentavos: 3000, descricao: 'mercado', recorrencia: 'nenhuma',
+    });
+    s.adicionarLancamentoComRecorrencia({
+      data: '2026-07-06', tipo: 'entrada', categoria: 'conta', valorCentavos: 5000, descricao: 'x',
+      recorrencia: 'nenhuma',
+    });
+    const [saida, entrada] = vivos(s);
+    expect(saida!.categoria).toBe('gasto');
+    expect(entrada!.categoria).toBe('gasto'); // entrada ignora categoria
+  });
+
   it('recorrencia N meses cria uma série a partir do mês da data', () => {
     const s = store();
     s.adicionarLancamentoComRecorrencia({
@@ -215,8 +238,9 @@ describe('backup: exportar / importar', () => {
     });
     const s = store();
     await s.importar(v1);
-    expect(s.dados.version).toBe(3);
+    expect(s.dados.version).toBe(4);
     expect(s.dados.lancamentos['a']!.tipo).toBe('saida');
+    expect(s.dados.lancamentos['a']!.categoria).toBe('gasto'); // v3→v4 default
   });
 
   it('importar rejeita JSON malformado', async () => {

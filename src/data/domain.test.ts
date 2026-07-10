@@ -11,7 +11,14 @@ import type { Lancamento } from './schema.ts';
 function lanc(
   p: Pick<Lancamento, 'data' | 'tipo' | 'valorCentavos'> & Partial<Lancamento>,
 ): Lancamento {
-  return { id: 'x', descricao: '', updatedAt: '2026-01-01T00:00:00.000Z', deleted: false, ...p };
+  return {
+    id: 'x',
+    categoria: 'gasto',
+    descricao: '',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    deleted: false,
+    ...p,
+  };
 }
 
 describe('budgetAcumCentavos (proporcional, sem drift)', () => {

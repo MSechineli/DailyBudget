@@ -7,8 +7,8 @@ import type { Lancamento, TipoLancamento } from './schema.ts';
 
 export interface ResumoMes {
   rendaCentavos: number;
-  totalFixosCentavos: number;
-  sobraCentavos: number; // renda − fixos (PODE ser negativo)
+  totalContasCentavos: number; // contas do mês (séries de saída + saídas avulsas 'conta')
+  sobraCentavos: number; // sobra livre = renda − contas (PODE ser negativo)
   diasNoMes: number; // 28..31
 }
 
@@ -28,12 +28,12 @@ export function montarResumoMes(
   ano: number,
   mes: number,
   rendaCentavos: number,
-  totalFixosCentavos: number,
+  totalContasCentavos: number,
 ): ResumoMes {
   return {
     rendaCentavos,
-    totalFixosCentavos,
-    sobraCentavos: rendaCentavos - totalFixosCentavos,
+    totalContasCentavos,
+    sobraCentavos: rendaCentavos - totalContasCentavos,
     diasNoMes: diasNoMes(ano, mes),
   };
 }

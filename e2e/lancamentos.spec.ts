@@ -12,9 +12,15 @@ async function abrirNovoLancamento(page: Page) {
 
 async function preencherModal(
   page: Page,
-  opts: { tipo?: 'Saída' | 'Entrada'; valor: string; descricao: string },
+  opts: {
+    tipo?: 'Saída' | 'Entrada';
+    valor: string;
+    descricao: string;
+    categoria?: 'Conta do mês' | 'Gasto do dia';
+  },
 ) {
   if (opts.tipo) await page.getByRole('button', { name: opts.tipo, exact: true }).click();
+  if (opts.categoria) await page.getByRole('button', { name: opts.categoria, exact: true }).click();
   await page.getByPlaceholder('0,00').fill(opts.valor);
   await page.getByPlaceholder('ex.: mercado, aluguel…').fill(opts.descricao);
 }
@@ -245,4 +251,35 @@ test('painel "posso gastar" e gráfico do saldo aparecem', async ({ page }) => {
   await expect(page.locator('.destaque-sub')).toContainText('Por semana');
   // gráfico SVG renderizado
   await expect(page.locator('svg.grafico')).toBeVisible();
+});
+
+const sobraLivre = (page: Page) =>
+  page.locator('.resumo-linha.total strong');
+
+test('conta debita do bolo (sobra livre cai, sem vermelho); gasto debita no dia (pode ficar vermelho)', async ({ page }) => {
+  // salário recorrente pra ter renda
+  await abrirNovoLancamento(page);
+  await preencherModal(page, { tipo: 'Entrada', valor: '3000,00', descricao: 'Salário' });
+  await page.getByRole('radio').nth(2).check(); // indefinida
+  await salvarModal(page);
+  await expect(sobraLivre(page)).toHaveText('R$ 3.000,00'); // sem contas ainda
+
+  // uma CONTA avulsa (cartão): debita do bolo → sobra livre cai, e NÃO fica vermelho
+  await abrirNovoLancamento(page);
+  await preencherModal(page, { tipo: 'Saída', categoria: 'Conta do mês', valor: '1000,00', descricao: 'Cartão' });
+  await salvarModal(page);
+  await expect(sobraLivre(page)).toHaveText('R$ 2.000,00'); // 3000 − 1000
+  await expect(itemLinha(page, 'Cartão')).toContainText('conta'); // badge
+  // nenhum dia da planilha fica vermelho por causa da conta
+  await expect(page.locator('.planilha .saldo.vermelho')).toHaveCount(0);
+
+  // um GASTO grande hoje: debita imediato no dia → pode ficar vermelho
+  const temHoje = await page.locator('.planilha tr.hoje').count();
+  test.skip(temHoje === 0, 'mês exibido não contém hoje');
+  await page.locator('.planilha tr.hoje .celula.saida').click();
+  await preencherModal(page, { categoria: 'Gasto do dia', valor: '5000,00', descricao: 'compra grande' });
+  await salvarModal(page);
+  // a sobra livre NÃO muda (gasto não é conta), mas o saldo de hoje despenca
+  await expect(sobraLivre(page)).toHaveText('R$ 2.000,00');
+  await expect(page.locator('.planilha tr.hoje .saldo.vermelho')).toHaveCount(1);
 });

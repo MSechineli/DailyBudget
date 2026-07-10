@@ -70,10 +70,18 @@
           </section>
         </template>
 
+        <!-- Sobra livre: renda − contas do mês (de onde vem o budget diário) -->
+        <section class="resumo">
+          <div class="resumo-linha"><span>Renda</span><strong x-text="rendaFmt"></strong></div>
+          <div class="resumo-linha"><span>− Contas do mês</span><strong class="neg" x-text="contasFmt"></strong></div>
+          <div class="resumo-linha total">
+            <span>= Sobra livre</span>
+            <strong :class="{ negativo: sobraLivreVermelha }" x-text="sobraLivreFmt"></strong>
+          </div>
+        </section>
+
         <!-- Mini-painel -->
         <section class="painel">
-          <div><span>Salário</span><strong x-text="rendaFmt"></strong></div>
-          <div><span>Fixos</span><strong x-text="fixosFmt"></strong></div>
           <div><span>Saldo inicial</span><strong x-text="saldoInicialFmt"></strong></div>
           <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
         </section>
@@ -94,6 +102,9 @@
                   <span class="item-desc"
                     x-text="item.descricao || (item.tipo === 'saida' ? 'Saída' : 'Entrada')"></span>
                   <span class="item-meta">
+                    <template x-if="item.ehConta">
+                      <span class="badge conta">conta</span>
+                    </template>
                     <template x-if="item.origem === 'serie'">
                       <span class="badge">recorrente · <span x-text="serieFimLabel(item)"></span></span>
                     </template>
@@ -150,6 +161,26 @@
               <button :class="{ ativo: modalForm.tipo === 'entrada' }"
                 @click="modalForm.tipo = 'entrada'">Entrada</button>
             </div>
+
+            <!-- Conta do mês (debita do bolo) vs Gasto do dia (débito imediato). Só saída avulsa. -->
+            <template
+              x-if="modalForm.tipo === 'saida' && modalModo !== 'editarSerie' && (modalModo !== 'novo' || modalForm.recorrenciaTipo === 'nenhuma')">
+              <div class="campo">
+                <span>Tipo de saída</span>
+                <div class="cat-toggle">
+                  <button :class="{ ativo: modalForm.categoria === 'gasto' }"
+                    @click="modalForm.categoria = 'gasto'">Gasto do dia</button>
+                  <button :class="{ ativo: modalForm.categoria === 'conta' }"
+                    @click="modalForm.categoria = 'conta'">Conta do mês</button>
+                </div>
+                <p class="cat-dica" x-show="modalForm.categoria === 'conta'">
+                  Debita do bolo do mês (sobra livre); não te deixa no vermelho.
+                </p>
+                <p class="cat-dica" x-show="modalForm.categoria === 'gasto'">
+                  Débito imediato no dia; consome o budget diário.
+                </p>
+              </div>
+            </template>
 
             <label class="campo">
               <span>Valor</span>
