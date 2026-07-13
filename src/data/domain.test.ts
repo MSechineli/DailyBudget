@@ -118,11 +118,14 @@ describe('calcularMes — casos de borda', () => {
     expect(dias[29]!.saldoCentavos).toBe(295000);
   });
 
-  it('sobra negativa: tudo vermelho e diasNoVermelho = 0', () => {
-    const resumo = montarResumoMes(2026, 9, 100000, 120000); // sobra -20000
-    const dias = calcularMes(2026, 9, resumo, []);
-    expect(dias.every((d) => d.status === 'vermelho')).toBe(true);
-    expect(dias.every((d) => d.diasNoVermelho === 0)).toBe(true);
+  it('valor diário 0: um gasto fica vermelho e não recupera (taxa diária 0)', () => {
+    const resumo = montarResumoMes(2026, 9, 0); // valor diário 0 → taxa base 0
+    const dias = calcularMes(2026, 9, resumo, [
+      lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 5000 }),
+    ]);
+    expect(dias[0]!.saldoCentavos).toBe(-5000);
+    expect(dias.every((d) => d.status === 'vermelho')).toBe(true); // nunca recupera
+    expect(dias.every((d) => d.diasNoVermelho === 0)).toBe(true); // taxa 0 → razão não faz sentido
   });
 
   it('saldo exatamente 0 é verde', () => {
