@@ -8,7 +8,9 @@ export default defineConfig({
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // Registramos o SW manualmente em main.ts (pra checar update com frequência),
+      // então o plugin não deve injetar o próprio script de registro.
+      injectRegister: null,
       // Offline-first: precacheia o shell do app.
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],

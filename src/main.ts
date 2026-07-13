@@ -15,6 +15,7 @@ import type { DiaCalculado } from './data/domain.ts';
 import { formatBRL, parseBRLToCentavos } from './data/money.ts';
 import { hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
 import type { TipoLancamento } from './data/schema.ts';
+import { registerSW } from 'virtual:pwa-register';
 import './style.css';
 
 type ModalModo = 'novo' | 'editarSerie' | 'editarLancamento';
@@ -361,3 +362,24 @@ function app() {
 (window as any).Alpine = Alpine;
 Alpine.data('app', app);
 Alpine.start();
+
+// Service worker (PWA, registerType 'autoUpdate'): registramos manualmente pra
+// poder checar atualização com frequência. Sem isso, uma aba já aberta pode
+// demorar MUITO pra perceber um deploy novo. Com autoUpdate, assim que o SW novo
+// é detectado ele ativa e a página recarrega sozinha (sem F5).
+// Obs: o piso de ~10 min é da CDN do GitHub Pages (cache do sw.js/index.html,
+// não configurável); isso aqui só garante que a aba pega a versão nova assim que
+// a CDN liberar. Pra atualização instantânea, migrar pro Cloudflare Pages.
+const updateSW = registerSW({
+  immediate: true,
+  onRegisteredSW(_swUrl, registration) {
+    if (!registration) return;
+    // Checa a cada 60s enquanto a aba está aberta.
+    setInterval(() => void registration.update(), 60_000);
+    // E também na hora que a aba volta a ficar visível.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void registration.update();
+    });
+  },
+});
+void updateSW;
