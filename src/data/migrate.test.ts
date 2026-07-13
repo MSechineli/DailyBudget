@@ -124,28 +124,36 @@ describe('migrar', () => {
     });
   });
 
-  describe('v3 → v4: lançamento ganha categoria', () => {
-    it('adiciona categoria "gasto" a todo lançamento existente', () => {
-      const v3 = {
-        version: 3,
+  describe('v4 → v5: carteiras', () => {
+    it('cria carteira Corrente, move lançamentos/séries pra ela, dá diaDoMes e tira categoria', () => {
+      const v4 = {
+        version: 4,
         config: { ano: 2026 },
-        series: {},
+        series: {
+          s: {
+            id: 's', tipo: 'entrada', valorCentavos: 400000, descricao: 'Salário',
+            mesInicio: '2026-01', mesFim: null, updatedAt: 'x', deleted: false,
+          },
+        },
         lancamentos: {
           a: {
-            id: 'a',
-            data: '2026-07-05',
-            tipo: 'saida',
-            valorCentavos: 3000,
-            descricao: 'mercado',
-            updatedAt: '2026-07-05T00:00:00.000Z',
-            deleted: false,
+            id: 'a', data: '2026-07-05', tipo: 'saida', categoria: 'gasto',
+            valorCentavos: 3000, descricao: 'mercado', updatedAt: 'x', deleted: false,
           },
         },
         sync: { driveFileId: null, lastSyncedHash: null },
       };
-      const migrado = migrar(v3);
+      const migrado = migrar(v4);
       expect(migrado.version).toBe(SCHEMA_VERSION);
-      expect(migrado.lancamentos['a']!.categoria).toBe('gasto');
+
+      const carteiraId = Object.keys(migrado.carteiras)[0]!;
+      expect(migrado.carteiras[carteiraId]).toMatchObject({ nome: 'Corrente', valorDiarioCentavos: 0 });
+      // lançamento: ganhou carteiraId, perdeu categoria
+      expect(migrado.lancamentos['a']!.carteiraId).toBe(carteiraId);
+      expect((migrado.lancamentos['a'] as any).categoria).toBeUndefined();
+      // série: ganhou carteiraId e diaDoMes
+      expect(migrado.series['s']!.carteiraId).toBe(carteiraId);
+      expect(migrado.series['s']!.diaDoMes).toBe(1);
     });
   });
 });

@@ -21,8 +21,8 @@ describe('carregar', () => {
   it('faz round-trip do que foi salvo', async () => {
     const d = criarDadosVazios(2026);
     d.series['s1'] = {
-      id: 's1', tipo: 'entrada', valorCentavos: 400000, descricao: 'Salário',
-      mesInicio: '2026-01', mesFim: null, updatedAt: '2026-01-01T00:00:00.000Z', deleted: false,
+      id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 400000, descricao: 'Salário',
+      diaDoMes: 5, mesInicio: '2026-01', mesFim: null, updatedAt: '2026-01-01T00:00:00.000Z', deleted: false,
     };
     await salvar(d);
 
@@ -41,8 +41,8 @@ describe('carregar', () => {
     // Snapshot bom salvo antes.
     const bom = criarDadosVazios(2026);
     bom.series['s1'] = {
-      id: 's1', tipo: 'entrada', valorCentavos: 123456, descricao: 'Salário',
-      mesInicio: '2026-01', mesFim: null, updatedAt: '2026-01-01T00:00:00.000Z', deleted: false,
+      id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 123456, descricao: 'Salário',
+      diaDoMes: 5, mesInicio: '2026-01', mesFim: null, updatedAt: '2026-01-01T00:00:00.000Z', deleted: false,
     };
     await set(KEY_ULTIMA_BOA, bom);
 

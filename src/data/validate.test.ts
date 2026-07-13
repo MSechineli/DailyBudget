@@ -6,9 +6,9 @@ function comLancamento() {
   const d = criarDadosVazios(2026);
   d.lancamentos['lanc_1'] = {
     id: 'lanc_1',
+    carteiraId: 'c1',
     data: '2026-01-05',
     tipo: 'saida',
-    categoria: 'gasto',
     valorCentavos: 3000,
     descricao: 'mercado',
     updatedAt: '2026-01-05T14:30:00.000Z',
@@ -21,9 +21,11 @@ function comSerie() {
   const d = criarDadosVazios(2026);
   d.series['serie_1'] = {
     id: 'serie_1',
+    carteiraId: 'c1',
     tipo: 'entrada',
     valorCentavos: 400000,
     descricao: 'Salário',
+    diaDoMes: 5,
     mesInicio: '2026-01',
     mesFim: null,
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -74,10 +76,16 @@ describe('validarAppData', () => {
     expect(() => validarAppData(d)).toThrow(/tipo/);
   });
 
-  it('rejeita categoria desconhecida', () => {
+  it('rejeita lançamento sem carteiraId', () => {
     const d = comLancamento();
-    (d.lancamentos['lanc_1'] as any).categoria = 'investimento';
-    expect(() => validarAppData(d)).toThrow(/categoria/);
+    delete (d.lancamentos['lanc_1'] as any).carteiraId;
+    expect(() => validarAppData(d)).toThrow(/carteiraId/);
+  });
+
+  it('rejeita série com diaDoMes fora de 1..31', () => {
+    const d = comSerie();
+    (d.series['serie_1'] as any).diaDoMes = 40;
+    expect(() => validarAppData(d)).toThrow(/diaDoMes/);
   });
 
   it('rejeita id que não bate com a chave do map', () => {
