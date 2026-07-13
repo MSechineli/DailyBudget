@@ -1,4 +1,12 @@
-import { mesKeyDeData, mesSeguinte, parseMesKey, type ISODate, type MesKey } from './dates.ts';
+import {
+  diasNoMes,
+  mesKeyDeData,
+  mesSeguinte,
+  parseMesKey,
+  toISODate,
+  type ISODate,
+  type MesKey,
+} from './dates.ts';
 import {
   agregarMes,
   calcularMes,
@@ -7,191 +15,189 @@ import {
   type ResumoMensalAgregado,
   type ResumoMes,
 } from './domain.ts';
-import type {
-  AppData,
-  CategoriaLancamento,
-  Lancamento,
-  SerieRecorrente,
-  TipoLancamento,
-} from './schema.ts';
+import type { AppData, Carteira, Lancamento, SerieRecorrente, TipoLancamento } from './schema.ts';
 
-// Ponte entre o AppData persistido e o domínio puro (domain.ts). Resolve
-// quais séries recorrentes valem em cada mês e monta os inputs que as
-// funções puras esperam.
-// Regra 4: tudo aqui é derivado on the fly; nada é armazenado.
+// Ponte entre o AppData persistido e o domínio puro (domain.ts). Tudo é POR
+// CARTEIRA: cada carteira tem seu valor diário manual (a base do orçamento),
+// seus lançamentos e suas séries. Regra 4: derivado on the fly, nada guardado.
 
-/** Séries recorrentes ativas num mês (mesInicio <= mk <= mesFim, ou mesFim null). */
+// ---- carteiras ----
+
+/** Carteiras vivas (não deletadas), na ordem de inserção. */
+export function carteirasVivas(dados: AppData): Carteira[] {
+  return Object.values(dados.carteiras).filter((c) => !c.deleted);
+}
+
+/** Uma carteira por id (mesmo deletada), ou undefined. */
+export function carteira(dados: AppData, carteiraId: string): Carteira | undefined {
+  return dados.carteiras[carteiraId];
+}
+
+/** Valor diário manual da carteira (centavos). 0 se a carteira não existir. */
+export function valorDiario(dados: AppData, carteiraId: string): number {
+  return dados.carteiras[carteiraId]?.valorDiarioCentavos ?? 0;
+}
+
+// ---- séries e materialização ----
+
+/** Séries ativas de uma carteira num mês (mesInicio <= mk <= mesFim, ou mesFim null). */
 export function seriesAtivasNoMes(
   dados: AppData,
+  carteiraId: string,
   mk: MesKey,
   tipo?: TipoLancamento,
 ): SerieRecorrente[] {
   return Object.values(dados.series).filter(
     (s) =>
       !s.deleted &&
+      s.carteiraId === carteiraId &&
       (tipo === undefined || s.tipo === tipo) &&
       s.mesInicio <= mk &&
       (s.mesFim === null || s.mesFim >= mk),
   );
 }
 
-/** Renda efetiva do mês: soma das séries de entrada ativas. */
-export function rendaMes(dados: AppData, mk: MesKey): number {
-  return seriesAtivasNoMes(dados, mk, 'entrada').reduce((acc, s) => acc + s.valorCentavos, 0);
+/** Data (YYYY-MM-DD) da ocorrência de uma série num mês, com o dia clampado. */
+export function dataOcorrencia(serie: SerieRecorrente, mk: MesKey): ISODate {
+  const { ano, mes } = parseMesKey(mk);
+  const dia = Math.min(serie.diaDoMes, diasNoMes(ano, mes));
+  return toISODate(ano, mes, dia);
 }
 
-/** Contas fixas do mês = séries de saída ativas (aluguel, assinatura...). */
-export function contasSeriesMes(dados: AppData, mk: MesKey): SerieRecorrente[] {
-  return seriesAtivasNoMes(dados, mk, 'saida');
+/** Lançamentos avulsos vivos de uma carteira num mês, ordenados por data. */
+export function lancamentosDoMes(dados: AppData, carteiraId: string, mk: MesKey): Lancamento[] {
+  return Object.values(dados.lancamentos)
+    .filter((l) => !l.deleted && l.carteiraId === carteiraId && mesKeyDeData(l.data) === mk)
+    .sort((a, b) =>
+      a.data < b.data ? -1 : a.data > b.data ? 1 : a.updatedAt < b.updatedAt ? -1 : 1,
+    );
 }
 
-/** Contas variáveis do mês = saídas avulsas marcadas como 'conta'. */
-export function contasAvulsasMes(dados: AppData, mk: MesKey): Lancamento[] {
-  return lancamentosDoMes(dados, mk).filter((l) => l.tipo === 'saida' && l.categoria === 'conta');
-}
+// Só o que o cálculo dia a dia precisa (domain.ts filtra por mês e ignora deletados).
+type Evento = Pick<Lancamento, 'data' | 'tipo' | 'valorCentavos'>;
 
 /**
- * Total das contas do mês, em centavos: contas fixas (séries de saída) + contas
- * variáveis (saídas avulsas 'conta'). É o que se desconta da renda pra formar a
- * sobra livre — contas NUNCA viram evento diário nem deixam o saldo no vermelho.
+ * Todos os "eventos" que compõem o mês da carteira: os lançamentos avulsos +
+ * as séries ativas materializadas como um lançamento datado (em `diaDoMes`).
+ * É o input do `calcularMes` (entrada dilui, saída bate na hora).
  */
-export function contasDoMes(dados: AppData, mk: MesKey): number {
-  const fixas = contasSeriesMes(dados, mk).reduce((acc, s) => acc + s.valorCentavos, 0);
-  const variaveis = contasAvulsasMes(dados, mk).reduce((acc, l) => acc + l.valorCentavos, 0);
-  return fixas + variaveis;
+export function eventosDoMes(dados: AppData, carteiraId: string, mk: MesKey): Evento[] {
+  const avulsos: Evento[] = lancamentosDoMes(dados, carteiraId, mk).map((l) => ({
+    data: l.data,
+    tipo: l.tipo,
+    valorCentavos: l.valorCentavos,
+  }));
+  const recorrentes: Evento[] = seriesAtivasNoMes(dados, carteiraId, mk).map((s) => ({
+    data: dataOcorrencia(s, mk),
+    tipo: s.tipo,
+    valorCentavos: s.valorCentavos,
+  }));
+  return [...avulsos, ...recorrentes];
 }
 
-/** Monta o ResumoMes (renda, contas, sobra livre, dias) para um mês. */
-export function resumoMesDe(dados: AppData, mk: MesKey): ResumoMes {
+// ---- resumo / cálculo do mês (por carteira) ----
+
+/** Monta o ResumoMes da carteira: base = valor diário × dias. */
+export function resumoMesDe(dados: AppData, carteiraId: string, mk: MesKey): ResumoMes {
   const { ano, mes } = parseMesKey(mk);
-  return montarResumoMes(ano, mes, rendaMes(dados, mk), contasDoMes(dados, mk));
+  return montarResumoMes(ano, mes, valorDiario(dados, carteiraId));
 }
 
-/** Custo diário médio (float) do mês = sobra livre / dias. Só exibição. */
-export function custoDiarioMedio(dados: AppData, mk: MesKey): number {
-  const r = resumoMesDe(dados, mk);
+/** Valor diário da carteira (float, pra exibição). Constante no mês. */
+export function custoDiarioMedio(dados: AppData, carteiraId: string, mk: MesKey): number {
+  const r = resumoMesDe(dados, carteiraId, mk);
   return r.sobraCentavos / r.diasNoMes;
 }
 
-/**
- * Um lançamento é "evento diário" (entra no cálculo dia a dia de `domain.ts`)
- * quando é uma entrada (diluída) ou uma saída de GASTO (imediata). Contas
- * (saídas 'conta') ficam de fora — já entram pela sobra livre.
- */
-function ehEventoDiario(l: Lancamento): boolean {
-  return l.tipo === 'entrada' || l.categoria === 'gasto';
-}
-
-/** Mês mais antigo com alguma atividade (lançamento avulso ou série), ou null se não há nada. */
-function mesMaisAntigo(dados: AppData): MesKey | null {
+/** Mês mais antigo com atividade na carteira (avulso ou série), ou null. */
+function mesMaisAntigo(dados: AppData, carteiraId: string): MesKey | null {
   let menor: MesKey | null = null;
   for (const l of Object.values(dados.lancamentos)) {
-    if (l.deleted) continue;
+    if (l.deleted || l.carteiraId !== carteiraId) continue;
     const mk = mesKeyDeData(l.data);
     if (menor === null || mk < menor) menor = mk;
   }
   for (const s of Object.values(dados.series)) {
-    if (s.deleted) continue;
+    if (s.deleted || s.carteiraId !== carteiraId) continue;
     if (menor === null || s.mesInicio < menor) menor = s.mesInicio;
   }
   return menor;
 }
 
 /**
- * Saldo inicial de um mês: o saldo acumulado ao final do mês anterior,
- * repetido mês a mês desde o primeiro lançamento/série (rollover contínuo —
- * regra 4: derivado on the fly, nunca guardado). Sem nenhuma atividade antes
- * de `mk`, o saldo inicial é 0.
+ * Saldo inicial de um mês da carteira: saldo acumulado ao final do mês anterior,
+ * repetido mês a mês desde a primeira atividade (rollover contínuo, por carteira).
+ * Sem atividade antes de `mk`, é 0.
  */
-export function saldoInicialMes(dados: AppData, mk: MesKey): number {
-  const anchor = mesMaisAntigo(dados);
+export function saldoInicialMes(dados: AppData, carteiraId: string, mk: MesKey): number {
+  const anchor = mesMaisAntigo(dados, carteiraId);
   if (anchor === null || mk <= anchor) return 0;
 
   let saldo = 0;
   for (let m = anchor; m < mk; m = mesSeguinte(m)) {
-    // sobra livre já desconta as contas (fixas + avulsas 'conta'); aqui só
-    // somamos os eventos diários (entradas avulsas − gastos avulsos), senão
-    // as contas seriam contadas duas vezes.
-    const sobra = resumoMesDe(dados, m).sobraCentavos;
+    const sobra = resumoMesDe(dados, carteiraId, m).sobraCentavos;
     let entradas = 0;
-    let gastos = 0;
-    for (const l of lancamentosDoMes(dados, m)) {
-      if (l.tipo === 'entrada') entradas += l.valorCentavos;
-      else if (l.categoria === 'gasto') gastos += l.valorCentavos;
+    let saidas = 0;
+    for (const ev of eventosDoMes(dados, carteiraId, m)) {
+      if (ev.tipo === 'entrada') entradas += ev.valorCentavos;
+      else saidas += ev.valorCentavos;
     }
-    saldo += sobra + entradas - gastos;
+    saldo += sobra + entradas - saidas;
   }
   return saldo;
 }
 
-/** Calcula o mês inteiro dia a dia (DiaCalculado[]) a partir do AppData. */
-export function calcularMesDe(dados: AppData, mk: MesKey): DiaCalculado[] {
+/** Calcula o mês inteiro dia a dia (DiaCalculado[]) de uma carteira. */
+export function calcularMesDe(dados: AppData, carteiraId: string, mk: MesKey): DiaCalculado[] {
   const { ano, mes } = parseMesKey(mk);
-  // Só entradas (diluídas) e gastos avulsos (imediatos) viram evento diário;
-  // contas entram pela sobra livre do ResumoMes.
-  const eventos = Object.values(dados.lancamentos).filter(ehEventoDiario);
-  return calcularMes(ano, mes, resumoMesDe(dados, mk), eventos, saldoInicialMes(dados, mk));
+  return calcularMes(
+    ano,
+    mes,
+    resumoMesDe(dados, carteiraId, mk),
+    eventosDoMes(dados, carteiraId, mk),
+    saldoInicialMes(dados, carteiraId, mk),
+  );
 }
 
-/** Agregado mensal (totais + dias no vermelho) para o resumo anual. */
-export function agregadoMesDe(dados: AppData, mk: MesKey): ResumoMensalAgregado {
-  return agregarMes(calcularMesDe(dados, mk));
+/** Agregado mensal (totais + dias no vermelho) de uma carteira. */
+export function agregadoMesDe(dados: AppData, carteiraId: string, mk: MesKey): ResumoMensalAgregado {
+  return agregarMes(calcularMesDe(dados, carteiraId, mk));
 }
 
-/** Lançamentos avulsos vivos (não deletados) de um mês, ordenados por data. */
-export function lancamentosDoMes(dados: AppData, mk: MesKey): Lancamento[] {
-  return Object.values(dados.lancamentos)
-    .filter((l) => !l.deleted && mesKeyDeData(l.data) === mk)
-    .sort((a, b) =>
-      a.data < b.data ? -1 : a.data > b.data ? 1 : a.updatedAt < b.updatedAt ? -1 : 1,
-    );
-}
+// ---- lista do Extrato ----
 
-/**
- * Item da lista "lançamentos do mês": avulso (day-exact) ou série recorrente.
- * `ehConta` = é uma conta do mês (série de saída, ou saída avulsa 'conta') — a
- * UI usa pra agrupar Contas vs Gastos/Entradas.
- */
-export type ItemMes = { ehConta: boolean } & (
-  | {
-      origem: 'avulso';
-      id: string;
-      tipo: TipoLancamento;
-      categoria: CategoriaLancamento;
-      valorCentavos: number;
-      descricao: string;
-      data: ISODate;
-    }
-  | {
-      origem: 'serie';
-      id: string;
-      tipo: TipoLancamento;
-      valorCentavos: number;
-      descricao: string;
-      serie: SerieRecorrente;
-    }
+/** Item do Extrato: lançamento avulso (day-exact) ou ocorrência de série. */
+export type ItemMes = {
+  id: string;
+  tipo: TipoLancamento;
+  valorCentavos: number;
+  descricao: string;
+  data: ISODate; // avulso: a data; série: a ocorrência daquele mês
+} & (
+  | { origem: 'avulso' }
+  | { origem: 'serie'; serie: SerieRecorrente }
 );
 
-/** Lista unificada pra UI: séries ativas no mês (primeiro) + avulsos do mês (por data). */
-export function itensDoMes(dados: AppData, mk: MesKey): ItemMes[] {
-  const series: ItemMes[] = seriesAtivasNoMes(dados, mk).map((s) => ({
+/** Lista do Extrato da carteira no mês: avulsos + séries (ocorrência), por data. */
+export function itensDoMes(dados: AppData, carteiraId: string, mk: MesKey): ItemMes[] {
+  const avulsos: ItemMes[] = lancamentosDoMes(dados, carteiraId, mk).map((l) => ({
+    origem: 'avulso',
+    id: l.id,
+    tipo: l.tipo,
+    valorCentavos: l.valorCentavos,
+    descricao: l.descricao,
+    data: l.data,
+  }));
+  const recorrentes: ItemMes[] = seriesAtivasNoMes(dados, carteiraId, mk).map((s) => ({
     origem: 'serie',
     id: s.id,
     tipo: s.tipo,
     valorCentavos: s.valorCentavos,
     descricao: s.descricao,
+    data: dataOcorrencia(s, mk),
     serie: s,
-    ehConta: s.tipo === 'saida', // série de saída = conta fixa
   }));
-  const avulsos: ItemMes[] = lancamentosDoMes(dados, mk).map((l) => ({
-    origem: 'avulso',
-    id: l.id,
-    tipo: l.tipo,
-    categoria: l.categoria,
-    valorCentavos: l.valorCentavos,
-    descricao: l.descricao,
-    data: l.data,
-    ehConta: l.tipo === 'saida' && l.categoria === 'conta',
-  }));
-  return [...series, ...avulsos];
+  return [...avulsos, ...recorrentes].sort((a, b) =>
+    a.data < b.data ? -1 : a.data > b.data ? 1 : 0,
+  );
 }

@@ -6,14 +6,16 @@ import {
   hojeISO,
   mesAnterior,
   mesKeyDeData,
+  parseISODate,
   toMesKey,
   type ISODate,
   type MesKey,
 } from './data/dates.ts';
 import {
+  criarCarteira,
   novoId,
   type AppData,
-  type CategoriaLancamento,
+  type Carteira,
   type Lancamento,
   type SerieRecorrente,
   type TipoLancamento,
@@ -33,6 +35,7 @@ export class Store {
   estado: Estado = 'carregando';
   origem: 'atual' | 'ultimaBoa' | 'novo' = 'novo';
   mesAtual: MesKey = toMesKey(new Date().getFullYear(), new Date().getMonth() + 1);
+  carteiraAtualId = ''; // definido no init() com a primeira carteira viva
 
   // Coalescing da gravação local: se já há um save em andamento, marca pra
   // rodar de novo ao terminar (evita writes concorrentes do mesmo objeto).
@@ -45,6 +48,7 @@ export class Store {
       const r = await carregar(new Date().getFullYear());
       this.dados = r.dados;
       this.origem = r.origem;
+      this.carteiraAtualId = this.primeiraCarteiraViva();
       this.estado = 'pronto';
       // Regra 6: garante a última gravação antes de ocultar/fechar a página.
       // pagehide é o evento mais confiável em mobile pra fechamento/reload.
@@ -91,21 +95,76 @@ export class Store {
     }
   }
 
+  // ---- carteiras ----
+
+  private carteirasVivas(): Carteira[] {
+    return Object.values(this.dados.carteiras).filter((c) => !c.deleted);
+  }
+
+  /** Id da primeira carteira viva (fallback pra quando a ativa some). */
+  private primeiraCarteiraViva(): string {
+    return this.carteirasVivas()[0]?.id ?? '';
+  }
+
+  /** A carteira ativa (ou undefined se nenhuma). */
+  get carteiraAtual(): Carteira | undefined {
+    return this.dados?.carteiras[this.carteiraAtualId];
+  }
+
+  /** Troca a carteira ativa (se existir e estiver viva). */
+  irParaCarteira(id: string): void {
+    if (this.dados.carteiras[id] && !this.dados.carteiras[id]!.deleted) {
+      this.carteiraAtualId = id;
+    }
+  }
+
+  adicionarCarteira(nome: string, valorDiarioCentavos = 0): Carteira {
+    const c = criarCarteira(nome, valorDiarioCentavos);
+    this.dados.carteiras[c.id] = c;
+    this.carteiraAtualId = c.id; // já foca na nova
+    this.persistir();
+    return c;
+  }
+
+  atualizarCarteira(
+    id: string,
+    patch: { nome?: string; valorDiarioCentavos?: number },
+  ): void {
+    const c = this.dados.carteiras[id];
+    if (!c || c.deleted) return;
+    if (patch.nome !== undefined) c.nome = patch.nome.trim();
+    if (patch.valorDiarioCentavos !== undefined) {
+      c.valorDiarioCentavos = Math.max(0, Math.round(patch.valorDiarioCentavos));
+    }
+    c.updatedAt = new Date().toISOString();
+    this.persistir();
+  }
+
+  /** Soft delete de uma carteira. Nunca remove a última viva. */
+  removerCarteira(id: string): void {
+    const c = this.dados.carteiras[id];
+    if (!c || c.deleted) return;
+    if (this.carteirasVivas().length <= 1) return; // sempre sobra uma
+    c.deleted = true;
+    c.updatedAt = new Date().toISOString();
+    if (this.carteiraAtualId === id) this.carteiraAtualId = this.primeiraCarteiraViva();
+    this.persistir();
+  }
+
   // ---- CRUD de lançamentos avulsos (day-exact) ----
 
   adicionarLancamento(input: {
+    carteiraId?: string;
     data: ISODate;
     tipo: TipoLancamento;
     valorCentavos: number;
     descricao: string;
-    categoria?: CategoriaLancamento;
   }): Lancamento {
     const l: Lancamento = {
       id: novoId('lanc'),
+      carteiraId: input.carteiraId ?? this.carteiraAtualId,
       data: input.data,
       tipo: input.tipo,
-      // Categoria só importa em saída; entrada grava 'gasto' (ignorado no cálculo).
-      categoria: input.tipo === 'saida' ? (input.categoria ?? 'gasto') : 'gasto',
       valorCentavos: input.valorCentavos,
       descricao: input.descricao.trim(),
       updatedAt: new Date().toISOString(),
@@ -140,9 +199,11 @@ export class Store {
   // ---- séries recorrentes (salário, gastos fixos, qualquer lançamento repetido) ----
 
   adicionarSerie(input: {
+    carteiraId?: string;
     tipo: TipoLancamento;
     valorCentavos: number;
     descricao: string;
+    diaDoMes: number;
     mesInicio: MesKey;
     repeticao: 'indefinida' | { meses: number };
   }): SerieRecorrente {
@@ -152,9 +213,11 @@ export class Store {
         : adicionarMeses(input.mesInicio, input.repeticao.meses - 1);
     const s: SerieRecorrente = {
       id: novoId('serie'),
+      carteiraId: input.carteiraId ?? this.carteiraAtualId,
       tipo: input.tipo,
       valorCentavos: input.valorCentavos,
       descricao: input.descricao.trim(),
+      diaDoMes: Math.min(31, Math.max(1, Math.round(input.diaDoMes))),
       mesInicio: input.mesInicio,
       mesFim,
       updatedAt: new Date().toISOString(),
@@ -167,27 +230,27 @@ export class Store {
 
   /**
    * Ponto de entrada único da modal de novo lançamento: sem recorrência vira
-   * um lançamento avulso (day-exact); com recorrência vira uma série
-   * recorrente a partir do mês da data informada.
+   * um lançamento avulso (day-exact); com recorrência vira uma série recorrente
+   * a partir do mês da data, ocorrendo no dia dessa data (`diaDoMes`).
    */
   adicionarLancamentoComRecorrencia(input: {
+    carteiraId?: string;
     data: ISODate;
     tipo: TipoLancamento;
     valorCentavos: number;
     descricao: string;
-    categoria?: CategoriaLancamento;
     recorrencia: Recorrencia;
   }): void {
     if (input.recorrencia === 'nenhuma') {
-      // Avulso: carrega a categoria (conta/gasto) escolhida na modal.
       this.adicionarLancamento(input);
       return;
     }
-    // Saída recorrente vira série (conta fixa implícita) — categoria não se aplica.
     this.adicionarSerie({
+      carteiraId: input.carteiraId,
       tipo: input.tipo,
       valorCentavos: input.valorCentavos,
       descricao: input.descricao,
+      diaDoMes: parseISODate(input.data).dia,
       mesInicio: mesKeyDeData(input.data),
       repeticao: input.recorrencia,
     });

@@ -30,7 +30,102 @@ body {
 main {
   max-width: 480px;
   margin: 0 auto;
-  padding: 16px;
+  /* espaço embaixo pra não ficar atrás da barra inferior fixa */
+  padding: 16px 16px calc(76px + env(safe-area-inset-bottom));
+}
+
+/* ---- carteira switcher (topo) ---- */
+.carteira-switcher {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--card);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+.carteira-nome {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.carteira-switcher .chevron {
+  color: var(--muted);
+}
+
+/* ---- barra inferior (abas) ---- */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  background: var(--card);
+  border-top: 1px solid var(--card2);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabbar button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.72rem;
+  padding: 8px 0;
+  cursor: pointer;
+}
+.tabbar button.ativo {
+  color: var(--accent);
+}
+.tabbar-ic {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+/* ---- lista de carteiras (bottom-sheet) ---- */
+.carteira-linha {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card2);
+  border-radius: 8px;
+  padding: 4px 8px 4px 0;
+}
+.carteira-linha.ativa {
+  outline: 2px solid var(--accent);
+}
+.carteira-pick {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--txt);
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.carteira-linha-nome {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.carteira-linha-vd {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.btn-perigo {
+  background: color-mix(in srgb, var(--vermelho) 30%, var(--card2));
+  color: var(--txt);
 }
 
 .status,

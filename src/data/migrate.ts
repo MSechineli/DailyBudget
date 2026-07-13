@@ -133,6 +133,43 @@ const passos: Record<number, PassoMigracao> = {
       ]),
     ),
   }),
+
+  // v4 → v5: múltiplas carteiras. Cria uma carteira "Corrente" (valor diário 0,
+  // o usuário define depois), move todos os lançamentos e séries pra ela, remove
+  // `categoria` (sai o modelo conta/gasto) e dá `diaDoMes: 1` às séries (viram
+  // lançamentos recorrentes datados). As séries de salário/contas viram
+  // lançamentos recorrentes normais da carteira — nada é perdido.
+  4: (d: any) => {
+    const now = new Date().toISOString();
+    const carteiraId = novoId('cart');
+    const corrente = {
+      id: carteiraId,
+      nome: 'Corrente',
+      valorDiarioCentavos: 0,
+      updatedAt: now,
+      deleted: false,
+    };
+    const lancamentos = Object.fromEntries(
+      Object.entries(d.lancamentos ?? {}).map(([id, l]: [string, any]) => {
+        const { categoria: _categoria, ...resto } = l;
+        return [id, { ...resto, carteiraId }];
+      }),
+    );
+    const series = Object.fromEntries(
+      Object.entries(d.series ?? {}).map(([id, s]: [string, any]) => [
+        id,
+        { ...s, carteiraId, diaDoMes: s.diaDoMes ?? 1 },
+      ]),
+    );
+    return {
+      version: 5,
+      config: d.config ?? { ano: new Date().getFullYear() },
+      carteiras: { [carteiraId]: corrente },
+      series,
+      lancamentos,
+      sync: d.sync ?? { driveFileId: null, lastSyncedHash: null },
+    };
+  },
 };
 
 /**

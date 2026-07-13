@@ -21,139 +21,163 @@
     </template>
 
     <template x-if="store.estado === 'pronto'">
-      <main>
-        <!-- Aviso de recuperação -->
-        <template x-if="store.origem === 'ultimaBoa'">
-          <p class="aviso">⚠️ Dados atuais estavam corrompidos — recuperada a última revisão boa.</p>
-        </template>
+      <div class="app-root">
+        <main>
+          <!-- Aviso de recuperação -->
+          <template x-if="store.origem === 'ultimaBoa'">
+            <p class="aviso">⚠️ Dados atuais estavam corrompidos — recuperada a última revisão boa.</p>
+          </template>
 
-        <!-- Navegação de mês -->
-        <header class="mes-nav">
-          <button @click="mudarMes(-1)" aria-label="Mês anterior">‹</button>
-          <h1 x-text="mesLabel"></h1>
-          <button @click="mudarMes(1)" aria-label="Próximo mês">›</button>
-        </header>
+          <!-- Carteira ativa (toca pra trocar/gerenciar) -->
+          <button class="carteira-switcher" @click="carteirasAberto = true">
+            <span class="carteira-nome" x-text="carteiraNome"></span>
+            <span class="chevron">▾</span>
+          </button>
 
-        <!-- Destaque: quanto posso gastar -->
-        <section class="destaque">
-          <div class="destaque-hoje">
-            <span>Posso gastar hoje</span>
-            <strong :class="{ negativo: disponivelHojeVermelho }" x-text="disponivelHojeFmt"></strong>
-          </div>
-          <div class="destaque-sub">
-            <div><span>Por dia</span><strong x-text="custoDiarioFmt"></strong></div>
-            <div><span>Por semana</span><strong x-text="porSemanaFmt"></strong></div>
-          </div>
-        </section>
+          <!-- Navegação de mês (compartilhada pelas duas abas) -->
+          <header class="mes-nav">
+            <button @click="mudarMes(-1)" aria-label="Mês anterior">‹</button>
+            <h1 x-text="mesLabel"></h1>
+            <button @click="mudarMes(1)" aria-label="Próximo mês">›</button>
+          </header>
 
-        <!-- Gráfico do saldo no mês -->
-        <template x-if="grafico">
-          <section class="grafico-wrap">
-            <svg class="grafico" :viewBox="`0 0 ${grafico.w} ${grafico.h}`" preserveAspectRatio="none"
-              role="img" aria-label="Saldo ao longo do mês">
-              <defs>
-                <linearGradient id="gradSaldo" x1="0" y1="0" x2="0" :y2="grafico.h"
-                  gradientUnits="userSpaceOnUse">
-                  <stop offset="0" class="stop-verde"></stop>
-                  <stop :offset="grafico.zeroFrac" class="stop-verde"></stop>
-                  <stop :offset="grafico.zeroFrac" class="stop-vermelho"></stop>
-                  <stop offset="1" class="stop-vermelho"></stop>
-                </linearGradient>
-              </defs>
-              <line class="grafico-zero" x1="0" :y1="grafico.zeroY" :x2="grafico.w" :y2="grafico.zeroY"></line>
-              <path :d="grafico.area" fill="url(#gradSaldo)" opacity="0.18" stroke="none"></path>
-              <path :d="grafico.linha" fill="none" stroke="url(#gradSaldo)" stroke-width="2"
-                vector-effect="non-scaling-stroke"></path>
-              <line x-show="grafico.hojeX !== null" class="grafico-hoje" :x1="grafico.hojeX" y1="0"
-                :x2="grafico.hojeX" :y2="grafico.h"></line>
-            </svg>
-          </section>
-        </template>
-
-        <!-- Sobra livre: renda − contas do mês (de onde vem o budget diário) -->
-        <section class="resumo">
-          <div class="resumo-linha"><span>Renda</span><strong x-text="rendaFmt"></strong></div>
-          <div class="resumo-linha"><span>− Contas do mês</span><strong class="neg" x-text="contasFmt"></strong></div>
-          <div class="resumo-linha total">
-            <span>= Sobra livre</span>
-            <strong :class="{ negativo: sobraLivreVermelha }" x-text="sobraLivreFmt"></strong>
-          </div>
-        </section>
-
-        <!-- Mini-painel -->
-        <section class="painel">
-          <div><span>Saldo inicial</span><strong x-text="saldoInicialFmt"></strong></div>
-          <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
-        </section>
-
-        <!-- Botão de lançamentos do mês -->
-        <button class="config-toggle" @click="listaAberta = !listaAberta">
-          <span x-text="listaAberta ? '▾ Fechar lançamentos' : '📋 Lançamentos do mês'"></span>
-        </button>
-
-        <!-- Painel: lançamentos do mês (avulsos + séries recorrentes) -->
-        <section class="config" x-show="listaAberta" x-cloak>
-          <button class="btn btn-novo" @click="abrirModalNovo()">+ Novo lançamento</button>
-
-          <div class="itens-mes">
-            <template x-for="item in itensMes" :key="item.id">
-              <div class="item-linha" :class="item.tipo">
-                <div class="item-info">
-                  <span class="item-desc"
-                    x-text="item.descricao || (item.tipo === 'saida' ? 'Saída' : 'Entrada')"></span>
-                  <span class="item-meta">
-                    <template x-if="item.ehConta">
-                      <span class="badge conta">conta</span>
-                    </template>
-                    <template x-if="item.origem === 'serie'">
-                      <span class="badge">recorrente · <span x-text="serieFimLabel(item)"></span></span>
-                    </template>
-                    <template x-if="item.origem === 'avulso'">
-                      <span x-text="diaMes(item.data)"></span>
-                    </template>
-                  </span>
-                </div>
-                <span class="item-valor" x-text="fmt(item.valorCentavos)"></span>
-                <div class="item-acoes">
-                  <template x-if="item.origem === 'serie'">
-                    <button class="icon" @click="abrirModalEditarSerie(item)" aria-label="Editar">✎</button>
-                  </template>
-                  <template x-if="item.origem === 'avulso'">
-                    <button class="icon" @click="abrirModalEditarLancamento(item)" aria-label="Editar">✎</button>
-                  </template>
-                  <template x-if="item.origem === 'serie'">
-                    <button class="icon del" @click="encerrarSerie(item)" aria-label="Encerrar">×</button>
-                  </template>
-                  <template x-if="item.origem === 'avulso'">
-                    <button class="icon del" @click="removerAvulso(item)" aria-label="Remover">×</button>
-                  </template>
-                </div>
+          <!-- ============ ABA: DIÁRIO ============ -->
+          <div x-show="aba === 'diario'">
+            <!-- Destaque: quanto posso gastar -->
+            <section class="destaque">
+              <div class="destaque-hoje">
+                <span>Posso gastar hoje</span>
+                <strong :class="{ negativo: disponivelHojeVermelho }" x-text="disponivelHojeFmt"></strong>
               </div>
-            </template>
-            <template x-if="itensMes.length === 0">
-              <p class="vazio">Nenhum lançamento neste mês ainda.</p>
-            </template>
-          </div>
+              <div class="destaque-sub">
+                <div><span>Valor diário</span><strong x-text="custoDiarioFmt"></strong></div>
+                <div><span>Por semana</span><strong x-text="porSemanaFmt"></strong></div>
+              </div>
+            </section>
 
-          <!-- Backup: exportar / importar JSON -->
-          <div class="backup">
-            <span class="titulo">Backup</span>
-            <div class="backup-botoes">
-              <button class="btn" @click="exportar()">⬇︎ Exportar JSON</button>
-              <label class="btn">
-                ⬆︎ Importar JSON
-                <input type="file" accept="application/json,.json" @change="importar($event)" hidden />
-              </label>
+            <!-- Gráfico do saldo no mês -->
+            <template x-if="grafico">
+              <section class="grafico-wrap">
+                <svg class="grafico" :viewBox="`0 0 ${grafico.w} ${grafico.h}`" preserveAspectRatio="none"
+                  role="img" aria-label="Saldo ao longo do mês">
+                  <defs>
+                    <linearGradient id="gradSaldo" x1="0" y1="0" x2="0" :y2="grafico.h"
+                      gradientUnits="userSpaceOnUse">
+                      <stop offset="0" class="stop-verde"></stop>
+                      <stop :offset="grafico.zeroFrac" class="stop-verde"></stop>
+                      <stop :offset="grafico.zeroFrac" class="stop-vermelho"></stop>
+                      <stop offset="1" class="stop-vermelho"></stop>
+                    </linearGradient>
+                  </defs>
+                  <line class="grafico-zero" x1="0" :y1="grafico.zeroY" :x2="grafico.w" :y2="grafico.zeroY"></line>
+                  <path :d="grafico.area" fill="url(#gradSaldo)" opacity="0.18" stroke="none"></path>
+                  <path :d="grafico.linha" fill="none" stroke="url(#gradSaldo)" stroke-width="2"
+                    vector-effect="non-scaling-stroke"></path>
+                  <line x-show="grafico.hojeX !== null" class="grafico-hoje" :x1="grafico.hojeX" y1="0"
+                    :x2="grafico.hojeX" :y2="grafico.h"></line>
+                </svg>
+              </section>
+            </template>
+
+            <!-- Mini-painel -->
+            <section class="painel">
+              <div><span>Saldo inicial</span><strong x-text="saldoInicialFmt"></strong></div>
+              <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
+            </section>
+
+            <!-- Planilha diária -->
+            <div class="tabela-wrap">
+              <table class="planilha">
+                <thead>
+                  <tr>
+                    <th class="c-dia">Dia</th>
+                    <th class="c-data">Data</th>
+                    <th class="c-num">Saída</th>
+                    <th class="c-num">Entrada</th>
+                    <th class="c-num">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="d in dias" :key="d.data">
+                    <tr :class="{ hoje: ehHoje(d.data) }">
+                      <td class="c-dia" x-text="d.dia"></td>
+                      <td class="c-data" x-text="diaMes(d.data)"></td>
+                      <td class="c-num">
+                        <button type="button" class="celula saida" :class="{ 'tem-valor': celulaTemValor(d, 'saida') }"
+                          @click="abrirDia(d, 'saida')" x-text="celulaFmt(d, 'saida')"></button>
+                      </td>
+                      <td class="c-num">
+                        <button type="button" class="celula entrada"
+                          :class="{ 'tem-valor': celulaTemValor(d, 'entrada') }" @click="abrirDia(d, 'entrada')"
+                          x-text="celulaFmt(d, 'entrada')"></button>
+                      </td>
+                      <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
             </div>
-            <p class="backup-msg" x-show="mensagemBackup" x-text="mensagemBackup"></p>
           </div>
-        </section>
 
-        <!-- Modal de lançamento (novo / editar série / editar avulso) -->
+          <!-- ============ ABA: EXTRATO ============ -->
+          <div x-show="aba === 'extrato'">
+            <button class="btn btn-novo" @click="abrirModalNovo()">+ Novo lançamento</button>
+
+            <div class="itens-mes">
+              <template x-for="item in itensMes" :key="item.id">
+                <div class="item-linha" :class="item.tipo">
+                  <div class="item-info">
+                    <span class="item-desc"
+                      x-text="item.descricao || (item.tipo === 'saida' ? 'Saída' : 'Entrada')"></span>
+                    <span class="item-meta">
+                      <span x-text="diaMes(item.data)"></span>
+                      <template x-if="item.origem === 'serie'">
+                        <span class="badge">· recorrente · <span x-text="serieFimLabel(item)"></span></span>
+                      </template>
+                    </span>
+                  </div>
+                  <span class="item-valor" x-text="fmt(item.valorCentavos)"></span>
+                  <div class="item-acoes">
+                    <button class="icon" @click="editarItem(item)" aria-label="Editar">✎</button>
+                    <button class="icon del" @click="removerItem(item)" aria-label="Remover">×</button>
+                  </div>
+                </div>
+              </template>
+              <template x-if="itensMes.length === 0">
+                <p class="vazio">Nenhum lançamento neste mês ainda.</p>
+              </template>
+            </div>
+
+            <!-- Backup: exportar / importar JSON -->
+            <div class="backup">
+              <span class="titulo">Backup</span>
+              <div class="backup-botoes">
+                <button class="btn" @click="exportar()">⬇︎ Exportar JSON</button>
+                <label class="btn">
+                  ⬆︎ Importar JSON
+                  <input type="file" accept="application/json,.json" @change="importar($event)" hidden />
+                </label>
+              </div>
+              <p class="backup-msg" x-show="mensagemBackup" x-text="mensagemBackup"></p>
+            </div>
+          </div>
+        </main>
+
+        <!-- ============ BARRA INFERIOR ============ -->
+        <nav class="tabbar">
+          <button :class="{ ativo: aba === 'extrato' }" @click="aba = 'extrato'">
+            <span class="tabbar-ic">📄</span><span>Extrato</span>
+          </button>
+          <button :class="{ ativo: aba === 'diario' }" @click="aba = 'diario'">
+            <span class="tabbar-ic">📅</span><span>Diário</span>
+          </button>
+        </nav>
+
+        <!-- ============ MODAL de lançamento ============ -->
         <div class="modal-backdrop" x-show="modalAberto" x-cloak @click.self="fecharModal()">
           <div class="modal">
             <h2
-              x-text="modalModo === 'novo' ? 'Novo lançamento' : modalModo === 'editarSerie' ? 'Editar série (daqui pra frente)' : 'Editar lançamento'">
+              x-text="modalModo === 'novo' ? 'Novo lançamento' : modalModo === 'editarSerie' ? 'Editar recorrência (daqui pra frente)' : 'Editar lançamento'">
             </h2>
 
             <div class="tipo-toggle">
@@ -162,26 +186,6 @@
                 @click="modalForm.tipo = 'entrada'">Entrada</button>
             </div>
 
-            <!-- Conta do mês (debita do bolo) vs Gasto do dia (débito imediato). Só saída avulsa. -->
-            <template
-              x-if="modalForm.tipo === 'saida' && modalModo !== 'editarSerie' && (modalModo !== 'novo' || modalForm.recorrenciaTipo === 'nenhuma')">
-              <div class="campo">
-                <span>Tipo de saída</span>
-                <div class="cat-toggle">
-                  <button :class="{ ativo: modalForm.categoria === 'gasto' }"
-                    @click="modalForm.categoria = 'gasto'">Gasto do dia</button>
-                  <button :class="{ ativo: modalForm.categoria === 'conta' }"
-                    @click="modalForm.categoria = 'conta'">Conta do mês</button>
-                </div>
-                <p class="cat-dica" x-show="modalForm.categoria === 'conta'">
-                  Debita do bolo do mês (sobra livre); não te deixa no vermelho.
-                </p>
-                <p class="cat-dica" x-show="modalForm.categoria === 'gasto'">
-                  Débito imediato no dia; consome o budget diário.
-                </p>
-              </div>
-            </template>
-
             <label class="campo">
               <span>Valor</span>
               <input type="text" inputmode="decimal" placeholder="0,00" x-model="modalForm.valor" />
@@ -189,7 +193,7 @@
 
             <label class="campo">
               <span>Descrição</span>
-              <input type="text" placeholder="ex.: mercado, aluguel…" x-model="modalForm.descricao" />
+              <input type="text" placeholder="ex.: mercado, salário…" x-model="modalForm.descricao" />
             </label>
 
             <template x-if="modalModo !== 'editarSerie'">
@@ -227,38 +231,51 @@
           </div>
         </div>
 
-        <!-- Planilha diária -->
-        <div class="tabela-wrap">
-          <table class="planilha">
-            <thead>
-              <tr>
-                <th class="c-dia">Dia</th>
-                <th class="c-data">Data</th>
-                <th class="c-num">Saída</th>
-                <th class="c-num">Entrada</th>
-                <th class="c-num">Saldo</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="d in dias" :key="d.data">
-                <tr :class="{ hoje: ehHoje(d.data) }">
-                  <td class="c-dia" x-text="d.dia"></td>
-                  <td class="c-data" x-text="diaMes(d.data)"></td>
-                  <td class="c-num">
-                    <button type="button" class="celula saida" :class="{ 'tem-valor': celulaTemValor(d, 'saida') }"
-                      @click="abrirDia(d, 'saida')" x-text="celulaFmt(d, 'saida')"></button>
-                  </td>
-                  <td class="c-num">
-                    <button type="button" class="celula entrada" :class="{ 'tem-valor': celulaTemValor(d, 'entrada') }"
-                      @click="abrirDia(d, 'entrada')" x-text="celulaFmt(d, 'entrada')"></button>
-                  </td>
-                  <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
-                </tr>
+        <!-- ============ Bottom-sheet: CARTEIRAS ============ -->
+        <div class="modal-backdrop" x-show="carteirasAberto" x-cloak @click.self="carteirasAberto = false">
+          <div class="modal">
+            <h2>Carteiras</h2>
+            <div class="itens-mes">
+              <template x-for="c in carteiras" :key="c.id">
+                <div class="carteira-linha" :class="{ ativa: c.id === store.carteiraAtualId }">
+                  <button class="carteira-pick" @click="selecionarCarteira(c.id)">
+                    <span class="carteira-linha-nome" x-text="c.nome"></span>
+                    <span class="carteira-linha-vd">Valor diário: <span x-text="fmt(c.valorDiarioCentavos)"></span></span>
+                  </button>
+                  <button class="icon" @click="abrirEditarCarteira(c)" aria-label="Editar">✎</button>
+                </div>
               </template>
-            </tbody>
-          </table>
+            </div>
+            <div class="modal-acoes">
+              <button class="btn" @click="carteirasAberto = false">Fechar</button>
+              <button class="btn btn-primario" @click="abrirNovaCarteira()">+ Nova carteira</button>
+            </div>
+          </div>
         </div>
-      </main>
+
+        <!-- ============ Bottom-sheet: FORM de carteira ============ -->
+        <div class="modal-backdrop" x-show="carteiraFormAberto" x-cloak @click.self="carteiraFormAberto = false">
+          <div class="modal">
+            <h2 x-text="carteiraForm.modo === 'nova' ? 'Nova carteira' : 'Editar carteira'"></h2>
+            <label class="campo">
+              <span>Nome</span>
+              <input type="text" placeholder="ex.: Corrente, Vale-alimentação…" x-model="carteiraForm.nome" />
+            </label>
+            <label class="campo">
+              <span>Valor diário</span>
+              <input type="text" inputmode="decimal" placeholder="0,00" x-model="carteiraForm.valorDiario" />
+            </label>
+            <div class="modal-acoes">
+              <template x-if="carteiraForm.modo === 'editar'">
+                <button class="btn btn-perigo"
+                  @click="excluirCarteira(carteiras.find(c => c.id === carteiraForm.id))">Excluir</button>
+              </template>
+              <button class="btn" @click="carteiraFormAberto = false">Cancelar</button>
+              <button class="btn btn-primario" @click="salvarCarteira()">Salvar</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
   </div>
 

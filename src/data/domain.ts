@@ -6,9 +6,8 @@ import type { Lancamento, TipoLancamento } from './schema.ts';
 // sempre positivo — o sinal vem do `tipo`. Tudo em centavos inteiros.
 
 export interface ResumoMes {
-  rendaCentavos: number;
-  totalContasCentavos: number; // contas do mês (séries de saída + saídas avulsas 'conta')
-  sobraCentavos: number; // sobra livre = renda − contas (PODE ser negativo)
+  valorDiarioCentavos: number; // valor diário manual da carteira (>= 0)
+  sobraCentavos: number; // base do mês = valorDiario × diasNoMes (o total a acumular)
   diasNoMes: number; // 28..31
 }
 
@@ -23,18 +22,17 @@ export interface DiaCalculado {
   diasNoVermelho: number; // 0 quando verde; usa a taxa diária de recuperação (base + entradas diluídas ativas)
 }
 
-/** Monta um ResumoMes a partir dos números crus do mês. */
+/** Monta um ResumoMes a partir do valor diário manual da carteira. */
 export function montarResumoMes(
   ano: number,
   mes: number,
-  rendaCentavos: number,
-  totalContasCentavos: number,
+  valorDiarioCentavos: number,
 ): ResumoMes {
+  const dias = diasNoMes(ano, mes);
   return {
-    rendaCentavos,
-    totalContasCentavos,
-    sobraCentavos: rendaCentavos - totalContasCentavos,
-    diasNoMes: diasNoMes(ano, mes),
+    valorDiarioCentavos,
+    sobraCentavos: valorDiarioCentavos * dias,
+    diasNoMes: dias,
   };
 }
 

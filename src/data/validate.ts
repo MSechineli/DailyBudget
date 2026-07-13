@@ -1,5 +1,5 @@
 import { isISODateValida } from './dates.ts';
-import type { AppData, Config, Lancamento, SerieRecorrente } from './schema.ts';
+import type { AppData, Carteira, Config, Lancamento, SerieRecorrente } from './schema.ts';
 
 // Regra 7: validar o JSON no load. Se falhar, o caller cai pra última revisão boa.
 // Validação estrutural após a migração — garante que a forma bate com o schema atual.
@@ -24,13 +24,26 @@ function validarConfig(v: unknown): asserts v is Config {
   assert(typeof c.ano === 'number', 'config.ano inválido');
 }
 
+function validarCarteira(v: unknown, ctx: string): asserts v is Carteira {
+  assert(v && typeof v === 'object', `${ctx}: não é objeto`);
+  const c = v as Record<string, unknown>;
+  assert(typeof c.id === 'string' && c.id !== '', `${ctx}.id inválido`);
+  assert(typeof c.nome === 'string', `${ctx}.nome inválido`);
+  assert(
+    isCentavos(c.valorDiarioCentavos) && c.valorDiarioCentavos >= 0,
+    `${ctx}.valorDiarioCentavos deve ser inteiro >= 0`,
+  );
+  assert(typeof c.updatedAt === 'string', `${ctx}.updatedAt inválido`);
+  assert(typeof c.deleted === 'boolean', `${ctx}.deleted inválido`);
+}
+
 function validarLancamento(v: unknown, ctx: string): asserts v is Lancamento {
   assert(v && typeof v === 'object', `${ctx}: não é objeto`);
   const l = v as Record<string, unknown>;
   assert(typeof l.id === 'string' && l.id !== '', `${ctx}.id inválido`);
+  assert(typeof l.carteiraId === 'string' && l.carteiraId !== '', `${ctx}.carteiraId inválido`);
   assert(isISODateValida(l.data), `${ctx}.data inválida (esperado YYYY-MM-DD): ${String(l.data)}`);
   assert(l.tipo === 'entrada' || l.tipo === 'saida', `${ctx}.tipo inválido`);
-  assert(l.categoria === 'conta' || l.categoria === 'gasto', `${ctx}.categoria inválida`);
   assert(
     isCentavos(l.valorCentavos) && l.valorCentavos > 0,
     `${ctx}.valorCentavos deve ser inteiro positivo (o sinal vem do tipo)`,
@@ -44,12 +57,17 @@ function validarSerie(v: unknown, ctx: string): asserts v is SerieRecorrente {
   assert(v && typeof v === 'object', `${ctx}: não é objeto`);
   const s = v as Record<string, unknown>;
   assert(typeof s.id === 'string' && s.id !== '', `${ctx}.id inválido`);
+  assert(typeof s.carteiraId === 'string' && s.carteiraId !== '', `${ctx}.carteiraId inválido`);
   assert(s.tipo === 'entrada' || s.tipo === 'saida', `${ctx}.tipo inválido`);
   assert(
     isCentavos(s.valorCentavos) && s.valorCentavos > 0,
     `${ctx}.valorCentavos deve ser inteiro positivo (o sinal vem do tipo)`,
   );
   assert(typeof s.descricao === 'string', `${ctx}.descricao inválida`);
+  assert(
+    isCentavos(s.diaDoMes) && (s.diaDoMes as number) >= 1 && (s.diaDoMes as number) <= 31,
+    `${ctx}.diaDoMes deve ser inteiro entre 1 e 31`,
+  );
   assert(isMesKey(s.mesInicio), `${ctx}.mesInicio inválido (esperado YYYY-MM): ${String(s.mesInicio)}`);
   assert(
     s.mesFim === null || isMesKey(s.mesFim),
@@ -68,6 +86,12 @@ export function validarAppData(v: unknown): asserts v is AppData {
   const d = v as Record<string, unknown>;
   assert(typeof d.version === 'number', 'version ausente ou inválida');
   validarConfig(d.config);
+
+  assert(d.carteiras && typeof d.carteiras === 'object', 'carteiras deve ser objeto');
+  for (const [k, c] of Object.entries(d.carteiras as object)) {
+    validarCarteira(c, `carteiras["${k}"]`);
+    assert((c as Carteira).id === k, `carteiras["${k}"].id não bate com a chave`);
+  }
 
   assert(d.series && typeof d.series === 'object', 'series deve ser objeto');
   for (const [k, s] of Object.entries(d.series as object)) {

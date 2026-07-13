@@ -6,19 +6,16 @@ import {
   montarResumoMes,
   type ResumoMes,
 } from './domain.ts';
-import type { Lancamento } from './schema.ts';
+import type { TipoLancamento } from './schema.ts';
 
-function lanc(
-  p: Pick<Lancamento, 'data' | 'tipo' | 'valorCentavos'> & Partial<Lancamento>,
-): Lancamento {
-  return {
-    id: 'x',
-    categoria: 'gasto',
-    descricao: '',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    deleted: false,
-    ...p,
-  };
+// calcularMes só precisa de data/tipo/valorCentavos (+ deleted opcional).
+function lanc(p: {
+  data: string;
+  tipo: TipoLancamento;
+  valorCentavos: number;
+  deleted?: boolean;
+}) {
+  return { deleted: false, ...p };
 }
 
 describe('budgetAcumCentavos (proporcional, sem drift)', () => {
@@ -37,8 +34,8 @@ describe('budgetAcumCentavos (proporcional, sem drift)', () => {
 describe('calcularMes — exemplo trabalhado do DOMINIO (saída imediata, entrada diluída)', () => {
   // renda 400000, fixos 100000 → sobra 300000; mês de 30 dias (2026-09).
   // Saída bate CHEIA no dia; entrada é DILUÍDA pelos dias restantes.
-  const resumo: ResumoMes = montarResumoMes(2026, 9, 400000, 100000);
-  const lancamentos: Lancamento[] = [
+  const resumo: ResumoMes = montarResumoMes(2026, 9, 10000);
+  const lancamentos = [
     lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }), // imediato: -25000 no dia 1
     lanc({ data: '2026-09-03', tipo: 'entrada', valorCentavos: 15000 }), // diluído: +15000/28 = +535,71/dia
     lanc({ data: '2026-09-04', tipo: 'saida', valorCentavos: 5000 }), // imediato: -5000 no dia 4
@@ -81,7 +78,7 @@ describe('calcularMes — exemplo trabalhado do DOMINIO (saída imediata, entrad
 
 describe('calcularMes — casos de borda', () => {
   it('saída imediata puxa pro vermelho e o budget diário recupera sozinho com o tempo', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000, taxa base 10000/dia
+    const resumo = montarResumoMes(2026, 9, 10000); // sobra 300000, taxa base 10000/dia
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
     ]);
@@ -95,7 +92,7 @@ describe('calcularMes — casos de borda', () => {
   });
 
   it('saída grande demais fica vermelha até uma entrada corrigir (entrada diluída)', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 310000 }), // > sobra do mês inteiro
       lanc({ data: '2026-09-15', tipo: 'entrada', valorCentavos: 200000 }), // dilui 200000/16 daqui pra frente
@@ -108,7 +105,7 @@ describe('calcularMes — casos de borda', () => {
   });
 
   it('mesmo dia: saída bate cheia e entrada só começa a diluir', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
       lanc({ data: '2026-09-01', tipo: 'entrada', valorCentavos: 20000 }),
@@ -129,19 +126,19 @@ describe('calcularMes — casos de borda', () => {
   });
 
   it('saldo exatamente 0 é verde', () => {
-    const resumo = montarResumoMes(2026, 9, 0, 0); // sobra 0, sem lançamentos
+    const resumo = montarResumoMes(2026, 9, 0); // sobra 0, sem lançamentos
     const dias = calcularMes(2026, 9, resumo, []);
     expect(dias.every((d) => d.saldoCentavos === 0)).toBe(true);
     expect(dias.every((d) => d.status === 'verde')).toBe(true);
   });
 
   it('fevereiro tem 28 dias; ano bissexto 29', () => {
-    expect(calcularMes(2026, 2, montarResumoMes(2026, 2, 100000, 0), [])).toHaveLength(28);
-    expect(calcularMes(2028, 2, montarResumoMes(2028, 2, 100000, 0), [])).toHaveLength(29);
+    expect(calcularMes(2026, 2, montarResumoMes(2026, 2, 10000), [])).toHaveLength(28);
+    expect(calcularMes(2028, 2, montarResumoMes(2028, 2, 10000), [])).toHaveLength(29);
   });
 
   it('soft delete não afeta saldo', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 25000, deleted: true }),
     ]);
@@ -150,7 +147,7 @@ describe('calcularMes — casos de borda', () => {
   });
 
   it('data fora do mês é ignorada pelo filtro', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-10-01', tipo: 'saida', valorCentavos: 25000 }),
     ]);
@@ -160,7 +157,7 @@ describe('calcularMes — casos de borda', () => {
 
 describe('agregarMes (resumo anual)', () => {
   it('soma totais e conta dias no vermelho; saldo final = último dia', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, [
       lanc({ data: '2026-09-01', tipo: 'saida', valorCentavos: 310000 }),
       lanc({ data: '2026-09-15', tipo: 'entrada', valorCentavos: 200000 }),
@@ -176,13 +173,13 @@ describe('agregarMes (resumo anual)', () => {
 
 describe('calcularMes — saldoInicialCentavos (rollover imediato do mês anterior)', () => {
   it('sem saldo inicial (padrão), começa do zero', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, []);
     expect(dias[0]!.saldoCentavos).toBe(10000);
   });
 
   it('rollover positivo aparece CHEIO já no dia 1 (imediato, não diluído)', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000, 30 dias
+    const resumo = montarResumoMes(2026, 9, 10000); // sobra 300000, 30 dias
     const dias = calcularMes(2026, 9, resumo, [], 50000);
     // dia 1 = saldo herdado (50000) + budget do dia (10000)
     expect(dias[0]!.budgetAcumCentavos).toBe(60000);
@@ -191,7 +188,7 @@ describe('calcularMes — saldoInicialCentavos (rollover imediato do mês anteri
   });
 
   it('rollover negativo (fechou no vermelho) começa no vermelho e recupera', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0); // sobra 300000
+    const resumo = montarResumoMes(2026, 9, 10000); // sobra 300000
     const dias = calcularMes(2026, 9, resumo, [], -350000);
     expect(dias[0]!.saldoCentavos).toBe(-340000); // -350000 + 10000
     expect(dias[0]!.status).toBe('vermelho');
@@ -199,7 +196,7 @@ describe('calcularMes — saldoInicialCentavos (rollover imediato do mês anteri
   });
 
   it('agregarMes propaga o saldo inicial pro saldoFinalCentavos', () => {
-    const resumo = montarResumoMes(2026, 9, 300000, 0);
+    const resumo = montarResumoMes(2026, 9, 10000);
     const dias = calcularMes(2026, 9, resumo, [], 50000);
     expect(agregarMes(dias).saldoFinalCentavos).toBe(350000);
   });

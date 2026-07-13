@@ -3,26 +3,26 @@ import { Store, type Recorrencia } from './store.ts';
 import {
   agregadoMesDe,
   calcularMesDe,
-  contasDoMes,
+  carteirasVivas,
   custoDiarioMedio,
   itensDoMes,
-  rendaMes,
-  resumoMesDe,
   saldoInicialMes,
+  valorDiario,
   type ItemMes,
 } from './data/derive.ts';
 import type { DiaCalculado } from './data/domain.ts';
+import type { Carteira } from './data/schema.ts';
 import { formatBRL, parseBRLToCentavos } from './data/money.ts';
 import { hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
 import type { TipoLancamento } from './data/schema.ts';
 import { registerSW } from 'virtual:pwa-register';
 import './style.css';
 
+type Aba = 'extrato' | 'diario';
 type ModalModo = 'novo' | 'editarSerie' | 'editarLancamento';
 
 interface ModalForm {
   tipo: TipoLancamento;
-  categoria: 'conta' | 'gasto'; // só usado em saída avulsa
   data: string; // 'YYYY-MM-DD'
   valor: string; // texto BRL, ex.: "19,90"
   descricao: string;
@@ -30,32 +30,41 @@ interface ModalForm {
   recorrenciaMeses: string;
 }
 
-// Componente principal do Alpine: a planilha diária. Uma linha por dia do
-// mês, com os totais de Saída/Entrada avulsos (read-only) e o saldo
-// acumulando. Lançamentos (avulsos e recorrentes) são criados/editados pela
-// modal; a lista "Lançamentos do mês" mostra tudo o que compõe o mês atual.
+interface CarteiraForm {
+  modo: 'nova' | 'editar';
+  id: string | null;
+  nome: string;
+  valorDiario: string; // texto BRL
+}
+
+// App financeiro com múltiplas CARTEIRAS. Duas abas por carteira: Extrato (lista
+// clássica de lançamentos) e Diário (a visualização de valor diário rolante).
+// Cada carteira tem um valor diário manual.
 //
 // IMPORTANTE: todo acesso ao store é via `this.store` (o proxy reativo do
 // Alpine), nunca por variável de closure — senão o re-render não dispara.
 function app() {
   return {
     store: new Store(),
-    listaAberta: false,
+    aba: 'diario' as Aba,
     hoje: hojeISO(),
 
-    // ---- modal de lançamento ----
+    // ---- overlays ----
     modalAberto: false,
     modalModo: 'novo' as ModalModo,
     modalAlvoId: null as string | null,
     modalForm: {
       tipo: 'saida',
-      categoria: 'gasto',
       data: hojeISO(),
       valor: '',
       descricao: '',
       recorrenciaTipo: 'nenhuma',
       recorrenciaMeses: '3',
     } as ModalForm,
+
+    carteirasAberto: false,
+    carteiraFormAberto: false,
+    carteiraForm: { modo: 'nova', id: null, nome: '', valorDiario: '' } as CarteiraForm,
 
     async init() {
       await this.store.init();
@@ -68,6 +77,11 @@ function app() {
       return this.store.estado === 'pronto';
     },
 
+    /** id da carteira ativa (atalho). */
+    get cid(): string {
+      return this.store.carteiraAtualId;
+    },
+
     get mesLabel(): string {
       const { ano, mes } = parseMesKey(this.store.mesAtual);
       const nomes = [
@@ -77,43 +91,80 @@ function app() {
       return `${nomes[mes - 1]} / ${ano}`;
     },
 
-    // ---- painel resumo ----
-    get rendaFmt(): string {
-      return this.pronto ? formatBRL(rendaMes(this.store.dados, this.store.mesAtual)) : '—';
+    // ---- carteiras ----
+    get carteiras(): Carteira[] {
+      return this.pronto ? carteirasVivas(this.store.dados) : [];
     },
-    /** Total das contas do mês (fixas + variáveis). */
-    get contasFmt(): string {
-      return this.pronto ? formatBRL(contasDoMes(this.store.dados, this.store.mesAtual)) : '—';
+    get carteiraNome(): string {
+      return this.store.carteiraAtual?.nome ?? '—';
     },
-    /** Sobra livre = renda − contas. É o bolo que vira budget diário. */
-    get sobraLivreFmt(): string {
-      if (!this.pronto) return '—';
-      return formatBRL(resumoMesDe(this.store.dados, this.store.mesAtual).sobraCentavos);
+    /** Valor diário (manual) da carteira ativa, formatado. */
+    get valorDiarioFmt(): string {
+      return this.pronto ? formatBRL(valorDiario(this.store.dados, this.cid)) : '—';
     },
-    get sobraLivreVermelha(): boolean {
-      if (!this.pronto) return false;
-      return resumoMesDe(this.store.dados, this.store.mesAtual).sobraCentavos < 0;
+    selecionarCarteira(id: string) {
+      this.store.irParaCarteira(id);
+      this.carteirasAberto = false;
     },
+    abrirNovaCarteira() {
+      this.carteiraForm = { modo: 'nova', id: null, nome: '', valorDiario: '' };
+      this.carteiraFormAberto = true;
+    },
+    abrirEditarCarteira(c: Carteira) {
+      this.carteiraForm = {
+        modo: 'editar',
+        id: c.id,
+        nome: c.nome,
+        valorDiario: this.plain(c.valorDiarioCentavos),
+      };
+      this.carteiraFormAberto = true;
+    },
+    salvarCarteira() {
+      const nome = this.carteiraForm.nome.trim();
+      if (!nome) return;
+      const valor = parseBRLToCentavos(this.carteiraForm.valorDiario) ?? 0;
+      if (this.carteiraForm.modo === 'nova') {
+        this.store.adicionarCarteira(nome, valor);
+      } else if (this.carteiraForm.id) {
+        this.store.atualizarCarteira(this.carteiraForm.id, { nome, valorDiarioCentavos: valor });
+      }
+      this.carteiraFormAberto = false;
+      this.carteirasAberto = false;
+    },
+    excluirCarteira(c: Carteira) {
+      if (this.carteiras.length <= 1) {
+        alert('Você precisa de pelo menos uma carteira.');
+        return;
+      }
+      if (!confirm(`Excluir a carteira "${c.nome}" e seus lançamentos?`)) return;
+      this.store.removerCarteira(c.id);
+      this.carteiraFormAberto = false;
+    },
+
+    // ---- resumo diário ----
     get custoDiarioFmt(): string {
       if (!this.pronto) return '—';
-      return formatBRL(Math.round(custoDiarioMedio(this.store.dados, this.store.mesAtual)));
+      return formatBRL(Math.round(custoDiarioMedio(this.store.dados, this.cid, this.store.mesAtual)));
+    },
+    get porSemanaFmt(): string {
+      if (!this.pronto) return '—';
+      return formatBRL(
+        Math.round(custoDiarioMedio(this.store.dados, this.cid, this.store.mesAtual) * 7),
+      );
     },
     get saldoFinalFmt(): string {
       if (!this.pronto) return '—';
-      return formatBRL(agregadoMesDe(this.store.dados, this.store.mesAtual).saldoFinalCentavos);
+      return formatBRL(agregadoMesDe(this.store.dados, this.cid, this.store.mesAtual).saldoFinalCentavos);
     },
-    /** Saldo herdado do(s) mês(es) anterior(es) — rollover contínuo. */
     get saldoInicialFmt(): string {
       if (!this.pronto) return '—';
-      return formatBRL(saldoInicialMes(this.store.dados, this.store.mesAtual));
+      return formatBRL(saldoInicialMes(this.store.dados, this.cid, this.store.mesAtual));
     },
 
     // ---- quanto posso gastar (hoje / dia / semana) ----
-    /** O DiaCalculado de hoje, se o mês exibido é o mês de hoje; senão null. */
     get diaDeHoje(): DiaCalculado | null {
       return this.dias.find((d) => d.data === this.hoje) ?? null;
     },
-    /** Saldo disponível hoje (o quanto dá pra gastar e ficar em zero). '—' fora do mês atual. */
     get disponivelHojeFmt(): string {
       const hoje = this.diaDeHoje;
       return hoje ? formatBRL(hoje.saldoCentavos) : '—';
@@ -122,22 +173,15 @@ function app() {
       const hoje = this.diaDeHoje;
       return hoje ? hoje.saldoCentavos < 0 : false;
     },
-    /** Ritmo semanal = custo diário médio × 7. */
-    get porSemanaFmt(): string {
-      if (!this.pronto) return '—';
-      return formatBRL(Math.round(custoDiarioMedio(this.store.dados, this.store.mesAtual) * 7));
-    },
 
-    // ---- lançamentos do mês (avulsos + séries recorrentes) ----
+    // ---- Extrato: lançamentos do mês (avulsos + séries) ----
     get itensMes(): ItemMes[] {
-      return this.pronto ? itensDoMes(this.store.dados, this.store.mesAtual) : [];
+      return this.pronto ? itensDoMes(this.store.dados, this.cid, this.store.mesAtual) : [];
     },
-    /** Rótulo de até quando a série vale. */
     serieFimLabel(item: ItemMes): string {
       if (item.origem !== 'serie') return '';
       return item.serie.mesFim === null ? 'sem fim' : `até ${item.serie.mesFim}`;
     },
-    /** Texto do botão de encerrar: exclui se a série ainda não teve mês ativo antes do atual. */
     encerrarLabel(item: ItemMes): string {
       if (item.origem !== 'serie') return '';
       return item.serie.mesInicio === this.store.mesAtual ? 'Excluir' : 'Encerrar daqui';
@@ -148,8 +192,7 @@ function app() {
       this.modalAlvoId = item.id;
       this.modalForm = {
         tipo: item.tipo,
-        categoria: 'gasto',
-        data: this.store.mesAtual + '-01',
+        data: item.data,
         valor: this.plain(item.valorCentavos),
         descricao: item.descricao,
         recorrenciaTipo: 'nenhuma',
@@ -163,7 +206,6 @@ function app() {
       this.modalAlvoId = item.id;
       this.modalForm = {
         tipo: item.tipo,
-        categoria: item.categoria,
         data: item.data,
         valor: this.plain(item.valorCentavos),
         descricao: item.descricao,
@@ -172,19 +214,22 @@ function app() {
       };
       this.modalAberto = true;
     },
-    encerrarSerie(item: ItemMes) {
-      if (item.origem !== 'serie') return;
-      if (!confirm(`${this.encerrarLabel(item)} "${item.descricao}"?`)) return;
-      this.store.encerrarSerieAPartir(item.id, this.store.mesAtual);
+    editarItem(item: ItemMes) {
+      if (item.origem === 'serie') this.abrirModalEditarSerie(item);
+      else this.abrirModalEditarLancamento(item);
     },
-    removerAvulso(item: ItemMes) {
-      if (item.origem !== 'avulso') return;
-      if (!confirm(`Excluir "${item.descricao || (item.tipo === 'saida' ? 'saída' : 'entrada')}"?`)) return;
-      this.store.removerLancamento(item.id);
+    removerItem(item: ItemMes) {
+      if (item.origem === 'serie') {
+        if (!confirm(`${this.encerrarLabel(item)} "${item.descricao}"?`)) return;
+        this.store.encerrarSerieAPartir(item.id, this.store.mesAtual);
+      } else {
+        const rot = item.descricao || (item.tipo === 'saida' ? 'saída' : 'entrada');
+        if (!confirm(`Excluir "${rot}"?`)) return;
+        this.store.removerLancamento(item.id);
+      }
     },
 
-    // ---- modal: abrir em branco / salvar / fechar ----
-    /** Data padrão pro form novo: hoje se estiver no mês atual, senão dia 1 do mês. */
+    // ---- modal de lançamento ----
     dataPadraoNoMes(): string {
       return mesKeyDeData(this.hoje) === this.store.mesAtual ? this.hoje : `${this.store.mesAtual}-01`;
     },
@@ -193,7 +238,6 @@ function app() {
       this.modalAlvoId = null;
       this.modalForm = {
         tipo: tipo ?? 'saida',
-        categoria: 'gasto',
         data: data ?? this.dataPadraoNoMes(),
         valor: '',
         descricao: '',
@@ -220,7 +264,6 @@ function app() {
         this.store.adicionarLancamentoComRecorrencia({
           data: this.modalForm.data,
           tipo: this.modalForm.tipo,
-          categoria: this.modalForm.categoria,
           valorCentavos,
           descricao: this.modalForm.descricao,
           recorrencia,
@@ -233,7 +276,6 @@ function app() {
       } else if (this.modalModo === 'editarLancamento' && this.modalAlvoId) {
         this.store.atualizarLancamento(this.modalAlvoId, {
           tipo: this.modalForm.tipo,
-          categoria: this.modalForm.tipo === 'saida' ? this.modalForm.categoria : 'gasto',
           data: this.modalForm.data,
           valorCentavos,
           descricao: this.modalForm.descricao,
@@ -250,7 +292,6 @@ function app() {
     // ---- backup ----
     mensagemBackup: '' as string,
 
-    /** Baixa um .json com todos os dados. */
     exportar() {
       const json = JSON.stringify(this.store.exportar(), null, 2);
       const blob = new Blob([json], { type: 'application/json' });
@@ -263,31 +304,27 @@ function app() {
       this.mensagemBackup = 'Backup exportado ✓';
     },
 
-    /** Importa um .json escolhido pelo usuário (migra + valida antes de aplicar). */
     async importar(e: Event) {
       const input = e.target as HTMLInputElement;
       const file = input.files?.[0];
       if (!file) return;
       try {
         await this.store.importar(await file.text());
+        this.store.carteiraAtualId = this.carteiras[0]?.id ?? '';
         this.mensagemBackup = 'Dados importados ✓';
       } catch (err) {
         this.mensagemBackup = `Falha ao importar: ${err instanceof Error ? err.message : 'arquivo inválido'}`;
       } finally {
-        input.value = ''; // permite reimportar o mesmo arquivo
+        input.value = '';
       }
     },
 
-    // ---- planilha ----
+    // ---- planilha diária ----
     get dias(): DiaCalculado[] {
-      return this.pronto ? calcularMesDe(this.store.dados, this.store.mesAtual) : [];
+      return this.pronto ? calcularMesDe(this.store.dados, this.cid, this.store.mesAtual) : [];
     },
 
-    /**
-     * Geometria do gráfico de saldo do mês (SVG inline, sem lib). Mapeia o
-     * saldo de cada dia num viewBox fixo; verde acima do zero, vermelho abaixo
-     * (via gradiente com corte na linha do zero). Marca o dia de hoje.
-     */
+    /** Geometria do gráfico de saldo do mês (SVG inline). */
     get grafico(): {
       w: number;
       h: number;
@@ -305,7 +342,7 @@ function app() {
       const saldos = dias.map((d) => d.saldoCentavos);
       const min = Math.min(0, ...saldos);
       const max = Math.max(0, ...saldos);
-      const span = max - min || 1; // evita divisão por zero
+      const span = max - min || 1;
       const n = dias.length;
       const x = (i: number) => pad + (i / (n - 1)) * (w - 2 * pad);
       const y = (v: number) => pad + (1 - (v - min) / span) * (h - 2 * pad);
@@ -319,24 +356,14 @@ function app() {
         pts.map((p) => `L${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') +
         ` L${x(n - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
       const hojeIdx = dias.findIndex((d) => d.data === this.hoje);
-      return {
-        w,
-        h,
-        linha,
-        area,
-        zeroY,
-        zeroFrac: zeroY / h,
-        hojeX: hojeIdx >= 0 ? x(hojeIdx) : null,
-      };
+      return { w, h, linha, area, zeroY, zeroFrac: zeroY / h, hojeX: hojeIdx >= 0 ? x(hojeIdx) : null };
     },
     ehHoje(data: string): boolean {
       return data === this.hoje;
     },
-    /** dd/mm de uma data ISO. */
     diaMes(data: string): string {
       return `${data.slice(8, 10)}/${data.slice(5, 7)}`;
     },
-    /** Total avulso (day-exact) da célula, só exibição. */
     celulaFmt(dia: DiaCalculado, tipo: TipoLancamento): string {
       const c = tipo === 'saida' ? dia.saidasCentavos : dia.entradasCentavos;
       return c ? this.fmt(c) : '—';
@@ -344,7 +371,6 @@ function app() {
     celulaTemValor(dia: DiaCalculado, tipo: TipoLancamento): boolean {
       return (tipo === 'saida' ? dia.saidasCentavos : dia.entradasCentavos) > 0;
     },
-    /** Clique na célula: abre a modal de novo lançamento pré-preenchida com o dia. */
     abrirDia(dia: DiaCalculado, tipo: TipoLancamento) {
       this.abrirModalNovo(dia.data, tipo);
     },
@@ -374,9 +400,7 @@ const updateSW = registerSW({
   immediate: true,
   onRegisteredSW(_swUrl, registration) {
     if (!registration) return;
-    // Checa a cada 60s enquanto a aba está aberta.
     setInterval(() => void registration.update(), 60_000);
-    // E também na hora que a aba volta a ficar visível.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void registration.update();
     });
