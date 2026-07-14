@@ -1,12 +1,16 @@
 :root {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --card2: #334155;
-  --txt: #e2e8f0;
-  --muted: #94a3b8;
-  --verde: #22c55e;
-  --vermelho: #ef4444;
-  --accent: #38bdf8;
+  /* Tema monocromático: preto / cinza / branco. Vermelho e verde ficam SÓ pro
+     status de saldo (positivo/negativo) — o resto da UI é neutro. */
+  --bg: #0a0a0b; /* fundo quase preto */
+  --card: #161618; /* cartão cinza bem escuro */
+  --card2: #232327; /* cinza escuro (inputs, chips) */
+  --linha: #2e2e33; /* bordas/divisórias */
+  --txt: #f4f4f5; /* texto quase branco */
+  --muted: #9b9ba3; /* texto secundário (cinza) */
+  --verde: #5ec27f; /* saldo positivo */
+  --vermelho: #e06a6a; /* saldo negativo */
+  --accent: #f4f4f5; /* destaque/ativo = branco */
+  --accent-txt: #0a0a0b; /* texto sobre o destaque branco */
   color-scheme: dark;
 }
 
@@ -364,6 +368,7 @@ main {
   width: 100%;
   color: var(--accent);
   font-weight: 700;
+  margin-bottom: 14px; /* respiro antes da lista de lançamentos */
 }
 .itens-mes {
   display: flex;
@@ -537,7 +542,7 @@ main {
 }
 .btn-primario {
   background: var(--accent);
-  color: #0f172a;
+  color: var(--accent-txt);
   font-weight: 700;
 }
 
