@@ -30,20 +30,3 @@ export function diasQueDura(saldoCentavos: number, ritmoDiarioCentavos: number):
   if (ritmoDiarioCentavos <= 0) return Infinity;
   return saldoCentavos / ritmoDiarioCentavos;
 }
-
-/**
- * Projeção do saldo dia a dia a um ritmo constante de gasto:
- * saldo(i) = saldoInicial − ritmo·i, para i = 0..dias (i = 0 é hoje).
- * Arredonda cada ponto; `ritmoDiarioCentavos` pode ser float (média/orçamento).
- */
-export function projetarSaldos(
-  saldoInicialCentavos: number,
-  ritmoDiarioCentavos: number,
-  dias: number,
-): number[] {
-  const out: number[] = [];
-  for (let i = 0; i <= dias; i++) {
-    out.push(Math.round(saldoInicialCentavos - ritmoDiarioCentavos * i));
-  }
-  return out;
-}

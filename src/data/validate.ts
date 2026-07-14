@@ -29,10 +29,6 @@ function validarCarteira(v: unknown, ctx: string): asserts v is Carteira {
   const c = v as Record<string, unknown>;
   assert(typeof c.id === 'string' && c.id !== '', `${ctx}.id inválido`);
   assert(typeof c.nome === 'string', `${ctx}.nome inválido`);
-  assert(
-    c.proximaRenda === null || isISODateValida(c.proximaRenda),
-    `${ctx}.proximaRenda inválida (esperado YYYY-MM-DD ou null): ${String(c.proximaRenda)}`,
-  );
   assert(typeof c.updatedAt === 'string', `${ctx}.updatedAt inválido`);
   assert(typeof c.deleted === 'boolean', `${ctx}.deleted inválido`);
 }

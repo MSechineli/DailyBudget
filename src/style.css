@@ -256,7 +256,6 @@ main {
   margin-bottom: 12px;
   font-size: 0.82rem;
   text-align: center;
-  cursor: pointer;
 }
 .renda-linha strong {
   font-variant-numeric: tabular-nums;
@@ -290,37 +289,6 @@ main {
 }
 .indicadores strong.negativo {
   color: var(--vermelho);
-}
-
-/* linha do orçamento recomendado (tracejada, neutra) no gráfico de projeção */
-.linha-orcamento {
-  stroke: var(--muted);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
-  opacity: 0.9;
-}
-.grafico-legenda {
-  display: flex;
-  justify-content: center;
-  gap: 14px;
-  margin-top: 4px;
-  font-size: 0.68rem;
-  color: var(--muted);
-}
-.grafico-legenda .dot {
-  display: inline-block;
-  width: 10px;
-  height: 0;
-  border-top: 2px solid currentColor;
-  vertical-align: middle;
-  margin-right: 3px;
-}
-.grafico-legenda .dot-real {
-  color: var(--verde);
-}
-.grafico-legenda .dot-orc {
-  color: var(--muted);
-  border-top-style: dashed;
 }
 
 /* ---- gráfico do saldo no mês ---- */
@@ -699,7 +667,7 @@ main {
 }
 .planilha th,
 .planilha td {
-  padding: 6px 8px;
+  padding: 6px 6px;
   border-bottom: 1px solid var(--card2);
   text-align: right;
   white-space: nowrap;
@@ -730,28 +698,17 @@ main {
   color: var(--accent);
   font-weight: 700;
 }
-.celula {
-  width: 88px;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  text-align: right;
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-  padding: 4px 2px;
-  border-radius: 6px;
-  cursor: pointer;
+.planilha .c-num {
+  width: 72px;
 }
-.celula:focus,
-.celula:hover {
-  outline: none;
-  background: var(--card2);
-}
-.celula.saida.tem-valor {
+.planilha .c-num.saida {
   color: var(--vermelho);
 }
-.celula.entrada.tem-valor {
+.planilha .c-num.entrada {
   color: var(--verde);
+}
+.planilha .c-num.vazio {
+  color: var(--muted);
 }
 .planilha .saldo {
   font-weight: 600;
@@ -761,6 +718,11 @@ main {
 }
 .planilha .saldo.vermelho {
   color: var(--vermelho);
+}
+.btn-vermais {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
 }
 
 /* ---- desktop / web (mobile-first, mas com boa leitura no wide) ---- */

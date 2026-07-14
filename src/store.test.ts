@@ -22,19 +22,16 @@ function seriesVivas(s: Store): SerieRecorrente[] {
 describe('carteiras: CRUD', () => {
   it('adicionarCarteira cria e foca na nova', () => {
     const s = store();
-    const c = s.adicionarCarteira('Vale-alimentação', '2026-08-05');
-    expect(c.proximaRenda).toBe('2026-08-05');
+    const c = s.adicionarCarteira('Vale-alimentação');
     expect(s.carteiraAtualId).toBe(c.id); // foca na nova
     expect(Object.values(s.dados.carteiras).filter((x) => !x.deleted)).toHaveLength(2);
   });
 
-  it('atualizarCarteira edita nome e próxima renda', () => {
+  it('atualizarCarteira edita o nome', () => {
     const s = store();
     const id = s.carteiraAtualId;
-    s.atualizarCarteira(id, { nome: 'Conta Corrente', proximaRenda: '2026-09-05' });
-    expect(s.dados.carteiras[id]).toMatchObject({ nome: 'Conta Corrente', proximaRenda: '2026-09-05' });
-    s.atualizarCarteira(id, { proximaRenda: null });
-    expect(s.dados.carteiras[id]!.proximaRenda).toBeNull();
+    s.atualizarCarteira(id, { nome: 'Conta Corrente' });
+    expect(s.dados.carteiras[id]).toMatchObject({ nome: 'Conta Corrente' });
   });
 
   it('removerCarteira soft-deleta e troca a ativa; nunca remove a última', () => {
@@ -167,7 +164,7 @@ describe('backup: exportar / importar', () => {
     });
     const s = store();
     await s.importar(v1);
-    expect(s.dados.version).toBe(6);
+    expect(s.dados.version).toBe(7);
     expect(s.dados.lancamentos['a']!.tipo).toBe('saida');
     const carteiraId = Object.keys(s.dados.carteiras)[0]!;
     expect(s.dados.lancamentos['a']!.carteiraId).toBe(carteiraId); // movido pra Corrente

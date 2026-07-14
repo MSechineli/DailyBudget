@@ -124,8 +124,8 @@ describe('migrar', () => {
     });
   });
 
-  describe('v4 → v6: carteiras + previsão', () => {
-    it('cria carteira Corrente (proximaRenda null), move lançamentos/séries, dá diaDoMes e tira categoria', () => {
+  describe('v4 → v7: carteiras + previsão', () => {
+    it('cria carteira Corrente, move lançamentos/séries, dá diaDoMes e tira categoria', () => {
       const v4 = {
         version: 4,
         config: { ano: 2026 },
@@ -144,12 +144,13 @@ describe('migrar', () => {
         sync: { driveFileId: null, lastSyncedHash: null },
       };
       const migrado = migrar(v4);
-      expect(migrado.version).toBe(SCHEMA_VERSION); // 6
+      expect(migrado.version).toBe(SCHEMA_VERSION); // 7
 
       const carteiraId = Object.keys(migrado.carteiras)[0]!;
-      // v4→v5 cria a carteira; v5→v6 troca valorDiario por proximaRenda
-      expect(migrado.carteiras[carteiraId]).toMatchObject({ nome: 'Corrente', proximaRenda: null });
+      // v4→v5 cria a carteira; v5→v6 põe proximaRenda; v6→v7 remove proximaRenda
+      expect(migrado.carteiras[carteiraId]).toMatchObject({ nome: 'Corrente' });
       expect((migrado.carteiras[carteiraId] as any).valorDiarioCentavos).toBeUndefined();
+      expect((migrado.carteiras[carteiraId] as any).proximaRenda).toBeUndefined();
       expect(migrado.lancamentos['a']!.carteiraId).toBe(carteiraId);
       expect((migrado.lancamentos['a'] as any).categoria).toBeUndefined();
       expect(migrado.series['s']!.carteiraId).toBe(carteiraId);
@@ -157,8 +158,8 @@ describe('migrar', () => {
     });
   });
 
-  describe('v5 → v6: valor diário vira próxima renda', () => {
-    it('troca valorDiarioCentavos por proximaRenda: null em cada carteira', () => {
+  describe('v5 → v7: valor diário sai; a carteira fica só com o essencial', () => {
+    it('remove valorDiarioCentavos e não deixa proximaRenda (removida em v7)', () => {
       const v5 = {
         version: 5,
         config: { ano: 2026 },
@@ -171,8 +172,27 @@ describe('migrar', () => {
       };
       const migrado = migrar(v5);
       expect(migrado.version).toBe(SCHEMA_VERSION);
-      expect(migrado.carteiras['c1']!.proximaRenda).toBeNull();
       expect((migrado.carteiras['c1'] as any).valorDiarioCentavos).toBeUndefined();
+      expect((migrado.carteiras['c1'] as any).proximaRenda).toBeUndefined();
+    });
+  });
+
+  describe('v6 → v7: remove o campo proximaRenda', () => {
+    it('tira proximaRenda de cada carteira (agora é derivada)', () => {
+      const v6 = {
+        version: 6,
+        config: { ano: 2026 },
+        carteiras: {
+          c1: { id: 'c1', nome: 'Corrente', proximaRenda: '2026-08-05', updatedAt: 'x', deleted: false },
+        },
+        series: {},
+        lancamentos: {},
+        sync: { driveFileId: null, lastSyncedHash: null },
+      };
+      const migrado = migrar(v6);
+      expect(migrado.version).toBe(SCHEMA_VERSION);
+      expect((migrado.carteiras['c1'] as any).proximaRenda).toBeUndefined();
+      expect(migrado.carteiras['c1']).toMatchObject({ id: 'c1', nome: 'Corrente' });
     });
   });
 });

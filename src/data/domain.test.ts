@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classificarISF, diasQueDura, projetarSaldos } from './domain.ts';
+import { classificarISF, diasQueDura } from './domain.ts';
 
 describe('classificarISF', () => {
   it('classifica pelas faixas de dias que o dinheiro dura', () => {
@@ -34,21 +34,5 @@ describe('diasQueDura', () => {
   it('ritmo 0 ou negativo → Infinity (não acaba sozinho)', () => {
     expect(diasQueDura(100000, 0)).toBe(Infinity);
     expect(diasQueDura(100000, -5)).toBe(Infinity);
-  });
-});
-
-describe('projetarSaldos', () => {
-  it('declina o saldo a um ritmo constante (i = 0..dias)', () => {
-    expect(projetarSaldos(200000, 10000, 3)).toEqual([200000, 190000, 180000, 170000]);
-  });
-  it('arredonda cada ponto (ritmo float)', () => {
-    // ritmo 8548,38/dia
-    expect(projetarSaldos(100000, 8548.38, 2)).toEqual([100000, 91452, 82903]);
-  });
-  it('ritmo do orçamento fecha em 0 no dia da renda', () => {
-    const saldo = 170000, dias = 22;
-    const linha = projetarSaldos(saldo, saldo / dias, dias);
-    expect(linha).toHaveLength(dias + 1);
-    expect(linha[dias]).toBe(0);
   });
 });

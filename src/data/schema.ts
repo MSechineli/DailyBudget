@@ -11,7 +11,10 @@ import type { ISODate, MesKey } from './dates.ts';
 // `proximaRenda` (data informada da próxima entrada de dinheiro). O orçamento
 // diário passa a ser DERIVADO (saldo atual ÷ dias até a próxima renda), junto
 // com ISF, data que o dinheiro acaba, folga/déficit. Ver DOMINIO.md.
-export const SCHEMA_VERSION = 6;
+// v7: sai o campo `proximaRenda`. A "próxima renda" passa a ser DERIVADA da
+// próxima ENTRADA futura já cadastrada (ex.: salário recorrente); o dia a dia
+// vira um extrato corrido (saldo real dia a dia). Ver DOMINIO.md.
+export const SCHEMA_VERSION = 7;
 
 // Entrada = dinheiro que ENTRA; Saída = dinheiro que SAI. valorCentavos é
 // sempre positivo — o sinal vem do tipo.
@@ -23,15 +26,12 @@ export interface Config {
 
 /**
  * Carteira = uma "conta" independente (Corrente, Investimento, Vale-alimentação…).
- * `proximaRenda` é a data (informada pelo usuário) da próxima entrada de dinheiro
- * — é o horizonte do orçamento diário previsto (saldo ÷ dias até a próxima renda)
- * e da projeção. `null` = ainda não informada. Cada carteira tem seus lançamentos
- * e séries.
+ * A "próxima renda" NÃO é um campo: é derivada da próxima entrada futura já
+ * cadastrada (ver derive.ts). Cada carteira tem seus lançamentos e séries.
  */
 export interface Carteira {
   id: string;
   nome: string;
-  proximaRenda: ISODate | null; // data da próxima renda; null = não informada
   updatedAt: string;
   deleted: boolean;
 }
@@ -81,11 +81,10 @@ export interface AppData {
 }
 
 /** Cria uma carteira com timestamp/soft-delete padrão. */
-export function criarCarteira(nome: string, proximaRenda: ISODate | null = null): Carteira {
+export function criarCarteira(nome: string): Carteira {
   return {
     id: novoId('cart'),
     nome: nome.trim(),
-    proximaRenda,
     updatedAt: new Date().toISOString(),
     deleted: false,
   };

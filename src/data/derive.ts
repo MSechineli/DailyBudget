@@ -9,7 +9,7 @@ import {
   type ISODate,
   type MesKey,
 } from './dates.ts';
-import { classificarISF, diasQueDura, projetarSaldos, type ISF } from './domain.ts';
+import { classificarISF, diasQueDura, type ISF } from './domain.ts';
 import type { AppData, Carteira, Lancamento, SerieRecorrente, TipoLancamento } from './schema.ts';
 
 // Ponte entre o AppData e a previsão. Tudo POR CARTEIRA e "a partir de hoje":
@@ -135,11 +135,33 @@ export function mediaDiariaGastos(dados: AppData, carteiraId: string, hoje: ISOD
   return saidas / JANELA_MEDIA_DIAS;
 }
 
-/** Dias até a próxima renda; null se não informada ou já passou (precisa atualizar). */
-export function diasAteRenda(cart: Carteira, hoje: ISODate): number | null {
-  if (!cart.proximaRenda) return null;
-  const d = diasEntre(hoje, cart.proximaRenda);
-  return d > 0 ? d : null;
+/** Quantos meses à frente varrer procurando a próxima entrada futura. */
+const HORIZONTE_PROXIMA_ENTRADA_MESES = 24;
+
+/**
+ * Próxima renda DERIVADA: a menor data > hoje entre os eventos de tipo
+ * `entrada` (avulsos + séries materializadas). Ex.: o salário recorrente. Varre
+ * mês a mês a partir do mês de hoje, com teto pra parar quando não há entrada
+ * futura (ex.: só saídas cadastradas). Retorna null se não achar nenhuma.
+ */
+export function proximaEntrada(dados: AppData, carteiraId: string, hoje: ISODate): ISODate | null {
+  let mk = mesKeyDeData(hoje);
+  for (let i = 0; i < HORIZONTE_PROXIMA_ENTRADA_MESES; i++) {
+    let menor: ISODate | null = null;
+    for (const ev of eventosDoMes(dados, carteiraId, mk)) {
+      if (ev.tipo !== 'entrada' || ev.data <= hoje) continue;
+      if (menor === null || ev.data < menor) menor = ev.data;
+    }
+    if (menor !== null) return menor;
+    mk = mesSeguinte(mk);
+  }
+  return null;
+}
+
+/** Dias até a próxima renda derivada; null se não há entrada futura cadastrada. */
+export function diasAteRenda(dados: AppData, carteiraId: string, hoje: ISODate): number | null {
+  const renda = proximaEntrada(dados, carteiraId, hoje);
+  return renda ? diasEntre(hoje, renda) : null;
 }
 
 export interface Previsao {
@@ -157,16 +179,16 @@ export interface Previsao {
 
 /** Monta todos os indicadores de previsão da carteira, "a partir de hoje". */
 export function previsaoDe(dados: AppData, carteiraId: string, hoje: ISODate): Previsao {
-  const cart = dados.carteiras[carteiraId];
   const saldo = saldoAtual(dados, carteiraId, hoje);
   const media = mediaDiariaGastos(dados, carteiraId, hoje);
-  const dar = cart ? diasAteRenda(cart, hoje) : null;
+  const renda = proximaEntrada(dados, carteiraId, hoje);
+  const dar = renda ? diasEntre(hoje, renda) : null;
   const orcamento = dar !== null ? saldo / dar : null;
   const dur = diasQueDura(saldo, media);
   const dataAcaba = Number.isFinite(dur) && saldo > 0 ? adicionarDias(hoje, Math.floor(dur)) : null;
   return {
     saldoAtualCentavos: saldo,
-    proximaRenda: cart?.proximaRenda ?? null,
+    proximaRenda: renda,
     diasAteRenda: dar,
     orcamentoDiarioCentavos: orcamento !== null ? Math.round(orcamento) : null,
     mediaDiariaCentavos: Math.round(media),
@@ -178,24 +200,57 @@ export function previsaoDe(dados: AppData, carteiraId: string, hoje: ISODate): P
   };
 }
 
-export interface Projecao {
-  dias: number; // horizonte = dias até a próxima renda
-  ritmoReal: number[]; // saldo projetado pela média de gastos (0..dias)
-  ritmoOrcamento: number[]; // saldo projetado gastando o orçamento recomendado
+/** Um dia da projeção como extrato corrido: movimento do dia + saldo ao fim dele. */
+export interface DiaProjecao {
+  data: ISODate;
+  gastoCentavos: number; // saídas registradas no dia
+  recebidoCentavos: number; // entradas registradas no dia
+  saldoCentavos: number; // saldo corrente ao fim do dia
+  hoje: boolean;
 }
 
-/** Projeção do saldo até a próxima renda (duas linhas). null se renda não informada. */
-export function projecaoDe(dados: AppData, carteiraId: string, hoje: ISODate): Projecao | null {
-  const cart = dados.carteiras[carteiraId];
-  const dar = cart ? diasAteRenda(cart, hoje) : null;
-  if (dar === null) return null;
-  const saldo = saldoAtual(dados, carteiraId, hoje);
-  const media = mediaDiariaGastos(dados, carteiraId, hoje);
-  return {
-    dias: dar,
-    ritmoReal: projetarSaldos(saldo, media, dar),
-    ritmoOrcamento: projetarSaldos(saldo, saldo / dar, dar),
-  };
+/**
+ * Projeção do saldo dia a dia como EXTRATO CORRIDO, de hoje até hoje+dias.
+ * Cada dia mostra o gasto/recebido REGISTRADO (avulsos + séries materializadas)
+ * e o saldo acumulado — entradas futuras (ex.: salário) aparecem como saltos.
+ * Performático: um passe monta o movimento por data; outro acumula o saldo.
+ */
+export function projecaoLedger(
+  dados: AppData,
+  carteiraId: string,
+  hoje: ISODate,
+  dias: number,
+): DiaProjecao[] {
+  const ate = adicionarDias(hoje, dias);
+  // 1) movimento por data no intervalo [hoje, ate], num passe pelos meses.
+  const mov = new Map<ISODate, { gasto: number; recebido: number }>();
+  const mkAte = mesKeyDeData(ate);
+  for (let mk = mesKeyDeData(hoje); mk <= mkAte; mk = mesSeguinte(mk)) {
+    for (const ev of eventosDoMes(dados, carteiraId, mk)) {
+      if (ev.data < hoje || ev.data > ate) continue;
+      const m = mov.get(ev.data) ?? { gasto: 0, recebido: 0 };
+      if (ev.tipo === 'entrada') m.recebido += ev.valorCentavos;
+      else m.gasto += ev.valorCentavos;
+      mov.set(ev.data, m);
+    }
+  }
+  // 2) saldo corrente: começa no saldo atual (já inclui tudo ≤ hoje) e acumula
+  // só os dias FUTUROS (o movimento de hoje já está embutido no saldo atual).
+  const out: DiaProjecao[] = [];
+  let saldo = saldoAtual(dados, carteiraId, hoje);
+  for (let i = 0; i <= dias; i++) {
+    const data = adicionarDias(hoje, i);
+    const m = mov.get(data) ?? { gasto: 0, recebido: 0 };
+    if (i > 0) saldo += m.recebido - m.gasto;
+    out.push({
+      data,
+      gastoCentavos: m.gasto,
+      recebidoCentavos: m.recebido,
+      saldoCentavos: saldo,
+      hoje: i === 0,
+    });
+  }
+  return out;
 }
 
 // ---- lista do Extrato ----

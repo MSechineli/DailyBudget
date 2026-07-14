@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 // E2E do app de previsão financeira. Cada carteira tem Extrato (lançamentos) e
-// Diário (saldo atual, orçamento/dia = saldo ÷ dias até a renda, ISF, projeção
-// verde/vermelho dia a dia).
+// Diário (saldo atual, orçamento/dia = saldo ÷ dias até a próxima renda DERIVADA
+// da próxima entrada futura, ISF, e o dia a dia = extrato corrido verde/vermelho).
 
 const sheet = (page: Page): Locator => page.locator('.modal-backdrop:visible').last().locator('.modal');
 
@@ -12,22 +12,14 @@ async function irAba(page: Page, nome: 'Extrato' | 'Diário') {
 
 async function novoLancamento(
   page: Page,
-  opts: { tipo?: 'Saída' | 'Entrada'; valor: string; descricao: string },
+  opts: { tipo?: 'Saída' | 'Entrada'; valor: string; descricao: string; data?: string },
 ) {
   await page.getByText('+ Novo lançamento').click();
   if (opts.tipo) await sheet(page).getByRole('button', { name: opts.tipo, exact: true }).click();
   await sheet(page).getByPlaceholder('0,00').fill(opts.valor);
   await sheet(page).getByPlaceholder('ex.: mercado, salário…').fill(opts.descricao);
-  // data fica no default (hoje), pra contar no saldo atual
-  await sheet(page).getByRole('button', { name: 'Salvar' }).click();
-  await expect(page.locator('.modal-backdrop:visible')).toHaveCount(0);
-}
-
-/** Define a próxima renda da carteira ativa (data ISO). */
-async function definirProximaRenda(page: Page, iso: string) {
-  await page.locator('.carteira-switcher').click();
-  await page.locator('.carteira-linha .icon').first().click();
-  await sheet(page).locator('input[type=date]').fill(iso);
+  // sem `data`, fica no default (hoje) pra contar no saldo atual
+  if (opts.data) await sheet(page).locator('input[type=date]').fill(opts.data);
   await sheet(page).getByRole('button', { name: 'Salvar' }).click();
   await expect(page.locator('.modal-backdrop:visible')).toHaveCount(0);
 }
@@ -59,32 +51,38 @@ test('carteira padrão "Corrente" e navegação por abas', async ({ page }) => {
   await expect(page.locator('.destaque-hoje')).toContainText('Saldo atual');
 });
 
-test('sem próxima renda: Diário mostra CTA e não calcula orçamento/projeção', async ({ page }) => {
+test('sem entrada futura: Diário mostra a dica e não calcula orçamento', async ({ page }) => {
   await irAba(page, 'Diário');
   await expect(page.locator('.renda-cta')).toBeVisible();
-  // orçamento/dia é o primeiro indicador; sem renda fica "—"
+  // orçamento/dia é o primeiro indicador; sem renda derivada fica "—"
   await expect(page.locator('.indicadores strong').first()).toHaveText('—');
-  await expect(page.locator('svg.grafico')).toHaveCount(0); // sem projeção
 });
 
-test('lançamentos alimentam o saldo e a previsão (orçamento, ISF, dia a dia)', async ({ page }) => {
+test('lançamentos alimentam o saldo e a previsão (renda derivada, ISF, dia a dia)', async ({ page }) => {
   await irAba(page, 'Extrato');
   await novoLancamento(page, { tipo: 'Entrada', valor: '2000,00', descricao: 'sobra' });
   await novoLancamento(page, { tipo: 'Saída', valor: '300,00', descricao: 'mercado' });
+  // entrada FUTURA (salário): vira a próxima renda derivada, não conta no saldo atual
+  await novoLancamento(page, { tipo: 'Entrada', valor: '4000,00', descricao: 'salário', data: await emDias(page, 30) });
   await expect(item(page, 'sobra')).toBeVisible();
 
-  await definirProximaRenda(page, await emDias(page, 30));
-
   await irAba(page, 'Diário');
-  // saldo atual = 2000 − 300
+  // saldo atual = 2000 − 300 (o salário futuro não conta)
   await expect(page.locator('.destaque-hoje strong')).toHaveText('R$ 1.700,00');
-  // orçamento/dia calculado (não é mais "—") e ISF presente
+  // próxima renda derivada → orçamento/dia calculado (não é mais "—") e ISF presente
+  await expect(page.locator('.renda-linha')).toContainText('Próxima renda');
   await expect(page.locator('.indicadores strong').first()).not.toHaveText('—');
   await expect(page.locator('.isf strong')).not.toHaveText('—');
-  // gráfico de projeção + tabela dia a dia com o primeiro dia = hoje
+  // gráfico do saldo corrido + tabela dia a dia com o primeiro dia = hoje
   await expect(page.locator('svg.grafico')).toBeVisible();
   await expect(page.locator('.planilha tbody tr').first()).toContainText('Hoje');
-  expect(await page.locator('.planilha tbody tr').count()).toBeGreaterThan(20);
+  // horizonte inicial de 60 dias (61 linhas: 0..60) e o salário futuro aparece como recebido
+  await expect(page.locator('.planilha tbody tr')).toHaveCount(61);
+  await expect(page.locator('.planilha .c-num.entrada').first()).toContainText('+');
+
+  // "Ver mais dias" estende o horizonte
+  await page.getByRole('button', { name: 'Ver mais dias' }).click();
+  await expect(page.locator('.planilha tbody tr')).toHaveCount(121);
 });
 
 test('carteiras são isoladas', async ({ page }) => {

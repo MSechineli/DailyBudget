@@ -8,8 +8,9 @@ App financeiro pessoal de **previsão** (não só registro): responde "quando me
 acaba, quanto posso gastar por dia até a próxima renda, corro risco?". Múltiplas
 **carteiras** (Corrente, Investimento, Vale-alimentação…), cada uma com **Extrato**
 (lançamentos) e **Diário** (painel de previsão: saldo atual, orçamento/dia = saldo ÷
-dias até a próxima renda, média de gastos, ISF, data que o dinheiro acaba, projeção
-verde/vermelho dia a dia). A próxima renda é uma **data informada** por carteira.
+dias até a próxima renda, média de gastos, ISF, data que o dinheiro acaba, e um **dia a
+dia** verde/vermelho — extrato corrido do saldo, horizonte extensível). A próxima renda
+é **derivada** da próxima entrada futura cadastrada (ex.: salário recorrente), não um campo.
 Carteiras são independentes. UI mobile-first (barra inferior de abas), com boa leitura
 no desktop (coluna centralizada).
 
@@ -60,13 +61,12 @@ stack e convenções.
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "config": { "ano": 2026 },
   "carteiras": {
     "cart_corrente": {
       "id": "cart_corrente",
       "nome": "Corrente",
-      "proximaRenda": "2026-08-05",
       "updatedAt": "2026-01-01T00:00:00.000Z",
       "deleted": false
     }
@@ -103,10 +103,10 @@ stack e convenções.
 
 ### Notas do schema
 
-- **`carteiras`** é um map por `id`. Cada carteira tem `nome` e `proximaRenda` (data
-  `YYYY-MM-DD` da próxima entrada de dinheiro, ou `null`) — o horizonte do orçamento
-  diário previsto (saldo ÷ dias até a renda) e da projeção. Sempre existe ao menos uma.
-  `config` guarda só o que é app-wide (`ano`).
+- **`carteiras`** é um map por `id`. Cada carteira tem só `nome` (+ metadados). A "próxima
+  renda" **não** é campo: é derivada da próxima entrada futura cadastrada (ver `derive.ts`),
+  e é o horizonte do orçamento diário (saldo ÷ dias até a renda). Sempre existe ao menos
+  uma carteira. `config` guarda só o que é app-wide (`ano`).
 - **`carteiraId`** em `Lancamento` e `SerieRecorrente`: a carteira dona. Carteiras são
   independentes (saldo/previsão por carteira; sem transferência por enquanto).
 - **`series` é um map por `id`.** `mesInicio`/`mesFim` (`"YYYY-MM"`, inclusive; `null` =
@@ -124,12 +124,13 @@ stack e convenções.
 
 ## Derivações (calcular, não armazenar)
 
-Saldo atual, orçamento diário, média, ISF, data que o dinheiro acaba, folga/déficit e a
-projeção verde/vermelho são **todos derivados** on the fly da fonte de verdade
-(carteiras + lançamentos + séries), por carteira, a partir de "hoje" — nunca guardados
-(regra 4). As fórmulas, casos de borda e exemplos trabalhados (fixtures de teste) estão
-em **`DOMINIO.md`**. Matemática pura (ISF, projeção) em `src/data/domain.ts`; a ponte com
-o `AppData` (saldo, séries materializadas, indicadores) em `src/data/derive.ts`.
+Saldo atual, próxima renda (próxima entrada futura), orçamento diário, média, ISF, data
+que o dinheiro acaba, folga/déficit e o **dia a dia** (extrato corrido: gasto/recebido/
+saldo por dia) são **todos derivados** on the fly da fonte de verdade (carteiras +
+lançamentos + séries), por carteira, a partir de "hoje" — nunca guardados (regra 4). As
+fórmulas, casos de borda e exemplos trabalhados (fixtures de teste) estão em **`DOMINIO.md`**.
+Matemática pura (ISF, dias que dura) em `src/data/domain.ts`; a ponte com o `AppData`
+(saldo, séries materializadas, indicadores, projeção corrida) em `src/data/derive.ts`.
 
 ## Sync com Drive (client-side)
 

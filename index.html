@@ -55,22 +55,22 @@
               </div>
             </section>
 
-            <!-- Próxima renda / CTA pra definir -->
-            <button class="renda-linha" @click="editarCarteiraAtiva()">
+            <!-- Próxima renda (derivada da próxima entrada futura cadastrada) -->
+            <div class="renda-linha">
               <template x-if="temRenda">
                 <span>Próxima renda: <strong x-text="proximaRendaFmt"></strong> · <span
-                    x-text="diasAteRendaTexto"></span> ✎</span>
+                    x-text="diasAteRendaTexto"></span></span>
               </template>
               <template x-if="!temRenda">
-                <span class="renda-cta">Defina a próxima renda pra ver o orçamento e a projeção ›</span>
+                <span class="renda-cta">Cadastre uma entrada futura (ex.: salário) pra ver o orçamento</span>
               </template>
-            </button>
+            </div>
 
-            <!-- Gráfico de projeção (ritmo real verde→vermelho + orçamento tracejado) -->
+            <!-- Gráfico do saldo corrido (verde acima do zero, vermelho abaixo) -->
             <template x-if="graficoProj">
               <section class="grafico-wrap">
                 <svg class="grafico" :viewBox="`0 0 ${graficoProj.w} ${graficoProj.h}`" preserveAspectRatio="none"
-                  role="img" aria-label="Projeção do saldo até a próxima renda">
+                  role="img" aria-label="Projeção do saldo dia a dia">
                   <defs>
                     <linearGradient id="gradSaldo" x1="0" y1="0" x2="0" :y2="graficoProj.h"
                       gradientUnits="userSpaceOnUse">
@@ -83,15 +83,9 @@
                   <line class="grafico-zero" x1="0" :y1="graficoProj.zeroY" :x2="graficoProj.w"
                     :y2="graficoProj.zeroY"></line>
                   <path :d="graficoProj.realArea" fill="url(#gradSaldo)" opacity="0.16" stroke="none"></path>
-                  <path :d="graficoProj.orc" fill="none" class="linha-orcamento" vector-effect="non-scaling-stroke">
-                  </path>
                   <path :d="graficoProj.real" fill="none" stroke="url(#gradSaldo)" stroke-width="2"
                     vector-effect="non-scaling-stroke"></path>
                 </svg>
-                <div class="grafico-legenda">
-                  <span><i class="dot dot-real"></i> ritmo real</span>
-                  <span><i class="dot dot-orc"></i> orçamento recomendado</span>
-                </div>
               </section>
             </template>
 
@@ -106,25 +100,34 @@
               </div>
             </section>
 
-            <!-- Projeção dia a dia (verde/vermelho) até a próxima renda -->
+            <!-- Dia a dia: extrato corrido (gasto/recebido registrado + saldo) -->
             <template x-if="diasProjecao.length">
-              <div class="tabela-wrap">
-                <table class="planilha">
+              <div class="dia-a-dia">
+                <div class="tabela-wrap">
+                  <table class="planilha">
                   <thead>
                     <tr>
                       <th class="c-data">Dia</th>
-                      <th class="c-num">Saldo projetado</th>
+                      <th class="c-num">Gasto</th>
+                      <th class="c-num">Recebido</th>
+                      <th class="c-num">Saldo</th>
                     </tr>
                   </thead>
                   <tbody>
                     <template x-for="d in diasProjecao" :key="d.data">
                       <tr :class="{ hoje: d.hoje }">
                         <td class="c-data" x-text="d.hoje ? 'Hoje · ' + diaMes(d.data) : diaMes(d.data)"></td>
-                        <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
+                        <td class="c-num" :class="d.gastoCentavos ? 'saida' : 'vazio'"
+                          x-text="d.gastoCentavos ? '−' + valorSimples(d.gastoCentavos) : '—'"></td>
+                        <td class="c-num" :class="d.recebidoCentavos ? 'entrada' : 'vazio'"
+                          x-text="d.recebidoCentavos ? '+' + valorSimples(d.recebidoCentavos) : '—'"></td>
+                        <td class="c-num saldo" :class="d.status" x-text="valorSimples(d.saldoCentavos)"></td>
                       </tr>
                     </template>
                   </tbody>
-                </table>
+                  </table>
+                </div>
+                <button class="btn btn-vermais" @click="verMaisDias()">Ver mais dias</button>
               </div>
             </template>
           </div>
@@ -250,8 +253,6 @@
                 <div class="carteira-linha" :class="{ ativa: c.id === store.carteiraAtualId }">
                   <button class="carteira-pick" @click="selecionarCarteira(c.id)">
                     <span class="carteira-linha-nome" x-text="c.nome"></span>
-                    <span class="carteira-linha-vd">Próxima renda: <span
-                        x-text="c.proximaRenda ? dataBR(c.proximaRenda) : '—'"></span></span>
                   </button>
                   <button class="icon" @click="abrirEditarCarteira(c)" aria-label="Editar">✎</button>
                 </div>
@@ -271,10 +272,6 @@
             <label class="campo">
               <span>Nome</span>
               <input type="text" placeholder="ex.: Corrente, Vale-alimentação…" x-model="carteiraForm.nome" />
-            </label>
-            <label class="campo">
-              <span>Próxima renda (quando cai o próximo dinheiro)</span>
-              <input type="date" x-model="carteiraForm.proximaRenda" />
             </label>
             <div class="modal-acoes">
               <template x-if="carteiraForm.modo === 'editar'">

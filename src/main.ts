@@ -4,14 +4,14 @@ import {
   carteirasVivas,
   itensDoMes,
   previsaoDe,
-  projecaoDe,
+  projecaoLedger,
+  type DiaProjecao,
   type ItemMes,
   type Previsao,
-  type Projecao,
 } from './data/derive.ts';
 import type { Carteira } from './data/schema.ts';
 import { formatBRL, parseBRLToCentavos } from './data/money.ts';
-import { adicionarDias, hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
+import { hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
 import type { TipoLancamento } from './data/schema.ts';
 import { registerSW } from 'virtual:pwa-register';
 import './style.css';
@@ -32,7 +32,6 @@ interface CarteiraForm {
   modo: 'nova' | 'editar';
   id: string | null;
   nome: string;
-  proximaRenda: string; // 'YYYY-MM-DD' ou ''
 }
 
 // App financeiro com PREVISÃO. Cada carteira tem Extrato (lançamentos) e Diário
@@ -54,7 +53,9 @@ function app() {
 
     carteirasAberto: false,
     carteiraFormAberto: false,
-    carteiraForm: { modo: 'nova', id: null, nome: '', proximaRenda: '' } as CarteiraForm,
+    carteiraForm: { modo: 'nova', id: null, nome: '' } as CarteiraForm,
+
+    horizonte: 60, // dias mostrados no dia a dia; "Ver mais dias" soma +60
 
     async init() {
       await this.store.init();
@@ -86,6 +87,10 @@ function app() {
     plain(centavos: number): string {
       return centavos ? formatBRL(centavos).replace('R$', '').trim() : '';
     },
+    /** Valor sem "R$" (pro dia a dia, onde o cabeçalho já diz que é dinheiro). */
+    valorSimples(centavos: number): string {
+      return formatBRL(centavos).replace('R$', '').trim();
+    },
 
     // ---- carteiras ----
     get carteiras(): Carteira[] {
@@ -96,28 +101,24 @@ function app() {
     },
     selecionarCarteira(id: string) {
       this.store.irParaCarteira(id);
+      this.horizonte = 60; // reinicia o horizonte do dia a dia ao trocar de carteira
       this.carteirasAberto = false;
     },
     abrirNovaCarteira() {
-      this.carteiraForm = { modo: 'nova', id: null, nome: '', proximaRenda: '' };
+      this.carteiraForm = { modo: 'nova', id: null, nome: '' };
       this.carteiraFormAberto = true;
     },
     abrirEditarCarteira(c: Carteira) {
-      this.carteiraForm = { modo: 'editar', id: c.id, nome: c.nome, proximaRenda: c.proximaRenda ?? '' };
+      this.carteiraForm = { modo: 'editar', id: c.id, nome: c.nome };
       this.carteiraFormAberto = true;
-    },
-    /** Abre o form da carteira ativa (atalho do Diário pra definir a próxima renda). */
-    editarCarteiraAtiva() {
-      if (this.store.carteiraAtual) this.abrirEditarCarteira(this.store.carteiraAtual);
     },
     salvarCarteira() {
       const nome = this.carteiraForm.nome.trim();
       if (!nome) return;
-      const renda = this.carteiraForm.proximaRenda || null;
       if (this.carteiraForm.modo === 'nova') {
-        this.store.adicionarCarteira(nome, renda);
+        this.store.adicionarCarteira(nome);
       } else if (this.carteiraForm.id) {
-        this.store.atualizarCarteira(this.carteiraForm.id, { nome, proximaRenda: renda });
+        this.store.atualizarCarteira(this.carteiraForm.id, { nome });
       }
       this.carteiraFormAberto = false;
       this.carteirasAberto = false;
@@ -195,43 +196,43 @@ function app() {
       return this.dataBR(this.previsao?.proximaRenda ?? null);
     },
 
-    // ---- gráfico de projeção (duas linhas) ----
-    get projecao(): Projecao | null {
-      return this.pronto ? projecaoDe(this.store.dados, this.cid, this.hoje) : null;
+    // ---- projeção: extrato corrido (dia a dia) ----
+    /** Saldo corrido de hoje até hoje+horizonte (gasto/recebido/saldo por dia). */
+    get ledger(): DiaProjecao[] {
+      return this.pronto ? projecaoLedger(this.store.dados, this.cid, this.hoje, this.horizonte) : [];
     },
+
+    /** Dia a dia com o status verde/vermelho pelo saldo corrente. */
+    get diasProjecao(): (DiaProjecao & { status: 'verde' | 'vermelho' })[] {
+      return this.ledger.map((d) => ({ ...d, status: d.saldoCentavos >= 0 ? 'verde' : 'vermelho' }));
+    },
+
+    verMaisDias() {
+      this.horizonte += 60;
+    },
+
+    /** Gráfico do saldo corrido: uma linha/área verde→vermelho no cruzamento do zero. */
     get graficoProj(): {
-      w: number; h: number; real: string; realArea: string; orc: string; zeroY: number; zeroFrac: number;
+      w: number; h: number; real: string; realArea: string; zeroY: number; zeroFrac: number;
     } | null {
-      const proj = this.projecao;
-      if (!proj || proj.dias < 1) return null;
+      const saldos = this.ledger.map((d) => d.saldoCentavos);
+      if (saldos.length < 2) return null;
       const w = 300, h = 90, pad = 6;
-      const real = proj.ritmoReal, orc = proj.ritmoOrcamento;
-      const todos = [...real, ...orc, 0];
+      const todos = [...saldos, 0];
       const min = Math.min(...todos), max = Math.max(...todos);
       const span = max - min || 1;
-      const n = real.length;
+      const n = saldos.length;
       const x = (i: number) => pad + (i / (n - 1)) * (w - 2 * pad);
       const y = (v: number) => pad + (1 - (v - min) / span) * (h - 2 * pad);
-      const linha = (arr: number[]) =>
-        arr.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      const linha = saldos
+        .map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`)
+        .join(' ');
       const zeroY = y(0);
       const realArea =
         `M${x(0).toFixed(1)},${zeroY.toFixed(1)} ` +
-        real.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ') +
+        saldos.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ') +
         ` L${x(n - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
-      return { w, h, real: linha(real), realArea, orc: linha(orc), zeroY, zeroFrac: zeroY / h };
-    },
-
-    /** Projeção dia a dia (hoje → próxima renda): data + saldo projetado + verde/vermelho. */
-    get diasProjecao(): { data: string; saldoCentavos: number; status: 'verde' | 'vermelho'; hoje: boolean }[] {
-      const proj = this.projecao;
-      if (!proj) return [];
-      return proj.ritmoReal.map((saldo, i) => ({
-        data: adicionarDias(this.hoje, i),
-        saldoCentavos: saldo,
-        status: saldo >= 0 ? 'verde' : 'vermelho',
-        hoje: i === 0,
-      }));
+      return { w, h, real: linha, realArea, zeroY, zeroFrac: zeroY / h };
     },
 
     // ---- Extrato ----

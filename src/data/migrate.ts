@@ -183,6 +183,19 @@ const passos: Record<number, PassoMigracao> = {
       }),
     ),
   }),
+
+  // v6 → v7: sai o campo `proximaRenda`. A próxima renda passa a ser derivada
+  // da próxima entrada futura já cadastrada (ver derive.ts) — nada a preencher.
+  6: (d: any) => ({
+    ...d,
+    version: 7,
+    carteiras: Object.fromEntries(
+      Object.entries(d.carteiras ?? {}).map(([id, c]: [string, any]) => {
+        const { proximaRenda: _r, ...resto } = c;
+        return [id, resto];
+      }),
+    ),
+  }),
 };
 
 /**
