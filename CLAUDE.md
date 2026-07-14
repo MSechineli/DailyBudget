@@ -4,12 +4,14 @@ Contexto e decisões de arquitetura deste projeto. Leia antes de escrever códig
 
 ## O que é
 
-App pessoal de **orçamento diário rolante**: organiza o que sobra depois das contas do
-mês e responde "quanto posso gastar hoje/na semana". Renda − contas = sobra livre → vira
-o custo diário; gastos do dia descontam na hora, contas debitam do bolo, recebimentos
-diluem, e o saldo rola de um mês pro outro.
+App financeiro pessoal com **múltiplas carteiras** (Corrente, Investimento, Vale-
+alimentação…). Cada carteira tem duas visões: **Extrato** (lista clássica de lançamentos)
+e **Valor diário** (orçamento diário rolante). O valor diário é **definido manualmente**
+por carteira; o saldo acumula esse valor por dia, gastos descontam na hora, recebimentos
+diluem, e o saldo rola de um mês pro outro. Carteiras são independentes (saldo/rollover
+por carteira). UI mobile-first (barra inferior de abas).
 
-**A regra de negócio (sobra livre, conta vs gasto, fórmulas de saldo, séries, rollover,
+**A regra de negócio (valor diário, fórmulas de saldo, séries recorrentes, rollover,
 "posso gastar") vive em `DOMINIO.md` — leia lá antes de mexer em `domain.ts`/`derive.ts`.**
 Este arquivo é só arquitetura, stack e convenções.
 
@@ -56,28 +58,27 @@ Este arquivo é só arquitetura, stack e convenções.
 
 ```json
 {
-  "version": 4,
-  "config": {
-    "ano": 2026
+  "version": 5,
+  "config": { "ano": 2026 },
+  "carteiras": {
+    "cart_corrente": {
+      "id": "cart_corrente",
+      "nome": "Corrente",
+      "valorDiarioCentavos": 8000,
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "deleted": false
+    }
   },
   "series": {
     "serie_salario": {
       "id": "serie_salario",
+      "carteiraId": "cart_corrente",
       "tipo": "entrada",
       "valorCentavos": 400000,
       "descricao": "Salário",
+      "diaDoMes": 5,
       "mesInicio": "2026-01",
       "mesFim": null,
-      "updatedAt": "2026-01-01T00:00:00.000Z",
-      "deleted": false
-    },
-    "serie_aluguel": {
-      "id": "serie_aluguel",
-      "tipo": "saida",
-      "valorCentavos": 120000,
-      "descricao": "Aluguel",
-      "mesInicio": "2026-01",
-      "mesFim": "2026-12",
       "updatedAt": "2026-01-01T00:00:00.000Z",
       "deleted": false
     }
@@ -85,52 +86,47 @@ Este arquivo é só arquitetura, stack e convenções.
   "lancamentos": {
     "lanc_abc123": {
       "id": "lanc_abc123",
+      "carteiraId": "cart_corrente",
       "data": "2026-01-05",
       "tipo": "saida",
-      "categoria": "gasto",
       "valorCentavos": 3000,
       "descricao": "mercado",
       "updatedAt": "2026-01-05T14:30:00.000Z",
       "deleted": false
     }
   },
-  "sync": {
-    "driveFileId": null,
-    "lastSyncedHash": null
-  }
+  "sync": { "driveFileId": null, "lastSyncedHash": null }
 }
 ```
 
 ### Notas do schema
 
-- **Não existe mais "config de renda/custos fixos pra sempre".** Salário e gastos fixos
-  (aluguel, luz…) são só **lançamentos recorrentes** — um `SerieRecorrente` em `series`
-  — igual qualquer outro lançamento, só que valendo por uma janela de meses em vez de
-  um dia só. `config` guarda só o que sobrou de app-wide (`ano`).
-- **`series` é um map por `id`.** Cada série tem `mesInicio`/`mesFim` (`"YYYY-MM"`,
-  ambos inclusive); `mesFim: null` = indefinida. A semântica (série "ativa" no mês,
-  regra de split ao editar "daqui pra frente", encerrar) está em `DOMINIO.md`.
-- **`lancamentos` é um map por `id`** (não array), só pra lançamentos avulsos (de um dia
-  só). Cada item tem `updatedAt` e `deleted` (soft delete). Isso deixa a porta aberta
-  pra merge item-a-item entre devices no futuro, sem retrabalho de schema. Por ora o
-  sync é last-write-wins do arquivo inteiro.
-- **`tipo`** (em `Lancamento` e `SerieRecorrente`): `"entrada"` (dinheiro que entra) |
-  `"saida"` (dinheiro que sai). `valorCentavos` é sempre positivo; o sinal vem do
-  `tipo`. Ver `DOMINIO.md`.
-- **`categoria`** (só em `Lancamento`): `"conta"` (conta do mês, debita do bolo → sobra
-  livre) | `"gasto"` (gasto do dia, débito imediato). Só importa em saída; entrada grava
-  `"gasto"` (ignorado). Série de saída é sempre conta (não tem o campo). Ver `DOMINIO.md`.
+- **`carteiras`** é um map por `id`. Cada carteira tem `nome` e `valorDiarioCentavos`
+  (o valor diário MANUAL, ≥ 0, base do orçamento). Sempre existe ao menos uma. `config`
+  guarda só o que é app-wide (`ano`).
+- **`carteiraId`** em `Lancamento` e `SerieRecorrente`: a carteira dona. Carteiras são
+  independentes (saldo/rollover por carteira; sem transferência por enquanto).
+- **`series` é um map por `id`.** `mesInicio`/`mesFim` (`"YYYY-MM"`, inclusive; `null` =
+  indefinida) + `diaDoMes` (1–31): a série materializa um lançamento datado nesse dia a
+  cada mês ativo. Semântica (ativa no mês, split ao editar "daqui pra frente", encerrar)
+  em `DOMINIO.md`.
+- **`lancamentos` é um map por `id`** (não array), só avulsos (de um dia só). `updatedAt`
+  + `deleted` (soft delete) por item — porta aberta pra merge item-a-item no futuro. Por
+  ora o sync é last-write-wins do arquivo inteiro.
+- **`tipo`** (`Lancamento`/`SerieRecorrente`): `"entrada"` | `"saida"`. `valorCentavos`
+  sempre positivo; o sinal vem do `tipo`. Ver `DOMINIO.md`.
 - **`sync.driveFileId`**: guardado localmente pra reencontrar o arquivo no Drive.
   No primeiro boot, se não tiver fileId, procurar por nome/`appProperties` (o escopo
   `drive.file` lista arquivos que o próprio app criou) antes de criar um novo — evita duplicata.
 
 ## Derivações (calcular, não armazenar)
 
-Saldo, status verde/vermelho, custo diário, rollover e "posso gastar" são **todos
-derivados** on the fly da fonte de verdade (lançamentos + séries) — nunca guardados
-(regra 4). As fórmulas, casos de borda e exemplos trabalhados (fixtures de teste) estão
-em **`DOMINIO.md`**. Implementação pura em `src/data/domain.ts`; a ponte com o
-`AppData` (séries recorrentes ativas, rollover) em `src/data/derive.ts`.
+Saldo, status verde/vermelho, rollover e "posso gastar" são **todos derivados** on the
+fly da fonte de verdade (carteiras + lançamentos + séries), por carteira — nunca
+guardados (regra 4). As fórmulas, casos de borda e exemplos trabalhados (fixtures de
+teste) estão em **`DOMINIO.md`**. Implementação pura em `src/data/domain.ts`; a ponte com
+o `AppData` (valor diário da carteira, séries materializadas, rollover) em
+`src/data/derive.ts`.
 
 ## Sync com Drive (client-side)
 
