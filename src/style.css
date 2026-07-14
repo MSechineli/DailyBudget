@@ -7,8 +7,9 @@
   --linha: #2e2e33; /* bordas/divisórias */
   --txt: #f4f4f5; /* texto quase branco */
   --muted: #9b9ba3; /* texto secundário (cinza) */
-  --verde: #5ec27f; /* saldo positivo */
-  --vermelho: #e06a6a; /* saldo negativo */
+  --verde: #5ec27f; /* saldo positivo / ISF bom */
+  --vermelho: #e06a6a; /* saldo negativo / ISF ruim */
+  --amarelo: #d9a441; /* ISF em atenção */
   --accent: #f4f4f5; /* destaque/ativo = branco */
   --accent-txt: #0a0a0b; /* texto sobre o destaque branco */
   color-scheme: dark;
@@ -72,6 +73,9 @@ main {
   background: var(--card);
   border-top: 1px solid var(--card2);
   padding-bottom: env(safe-area-inset-bottom);
+  /* no desktop, acompanha a coluna centralizada do app */
+  max-width: 480px;
+  margin-inline: auto;
 }
 .tabbar button {
   flex: 1;
@@ -214,6 +218,109 @@ main {
 .destaque-sub strong {
   font-size: 0.95rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- previsão: ISF, renda, indicadores ---- */
+.isf {
+  text-align: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--linha);
+}
+.isf span {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.isf strong {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.isf.isf-bom strong {
+  color: var(--verde);
+}
+.isf.isf-atencao strong {
+  color: var(--amarelo);
+}
+.isf.isf-ruim strong {
+  color: var(--vermelho);
+}
+
+.renda-linha {
+  width: 100%;
+  background: var(--card);
+  color: var(--txt);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.82rem;
+  text-align: center;
+  cursor: pointer;
+}
+.renda-linha strong {
+  font-variant-numeric: tabular-nums;
+}
+.renda-cta {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.indicadores {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.indicadores div {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+.indicadores span {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.indicadores strong {
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+.indicadores strong.negativo {
+  color: var(--vermelho);
+}
+
+/* linha do orçamento recomendado (tracejada, neutra) no gráfico de projeção */
+.linha-orcamento {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: 0.9;
+}
+.grafico-legenda {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.grafico-legenda .dot {
+  display: inline-block;
+  width: 10px;
+  height: 0;
+  border-top: 2px solid currentColor;
+  vertical-align: middle;
+  margin-right: 3px;
+}
+.grafico-legenda .dot-real {
+  color: var(--verde);
+}
+.grafico-legenda .dot-orc {
+  color: var(--muted);
+  border-top-style: dashed;
 }
 
 /* ---- gráfico do saldo no mês ---- */
@@ -654,4 +761,33 @@ main {
 }
 .planilha .saldo.vermelho {
   color: var(--vermelho);
+}
+
+/* ---- desktop / web (mobile-first, mas com boa leitura no wide) ---- */
+@media (min-width: 600px) {
+  body {
+    /* leve gradiente pra a coluna do app "descolar" do fundo */
+    background: radial-gradient(120% 80% at 50% 0%, #131316 0%, var(--bg) 60%);
+  }
+  main {
+    min-height: 100vh;
+    border-inline: 1px solid var(--linha);
+  }
+  .tabbar {
+    border-inline: 1px solid var(--linha);
+  }
+  /* modais/bottom-sheets viram diálogos centralizados */
+  .modal-backdrop {
+    align-items: center;
+  }
+  .modal {
+    max-width: 440px;
+    border-radius: 16px;
+    padding-bottom: 20px;
+  }
+  /* alvos de toque um tico menores no desktop (mouse) */
+  .celula,
+  .tabbar button {
+    cursor: pointer;
+  }
 }

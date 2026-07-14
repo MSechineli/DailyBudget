@@ -22,25 +22,25 @@ function seriesVivas(s: Store): SerieRecorrente[] {
 describe('carteiras: CRUD', () => {
   it('adicionarCarteira cria e foca na nova', () => {
     const s = store();
-    const c = s.adicionarCarteira('Vale-alimentação', 4000);
-    expect(c.valorDiarioCentavos).toBe(4000);
+    const c = s.adicionarCarteira('Vale-alimentação', '2026-08-05');
+    expect(c.proximaRenda).toBe('2026-08-05');
     expect(s.carteiraAtualId).toBe(c.id); // foca na nova
     expect(Object.values(s.dados.carteiras).filter((x) => !x.deleted)).toHaveLength(2);
   });
 
-  it('atualizarCarteira edita nome e valor diário (não deixa negativo)', () => {
+  it('atualizarCarteira edita nome e próxima renda', () => {
     const s = store();
     const id = s.carteiraAtualId;
-    s.atualizarCarteira(id, { nome: 'Conta Corrente', valorDiarioCentavos: 8000 });
-    expect(s.dados.carteiras[id]).toMatchObject({ nome: 'Conta Corrente', valorDiarioCentavos: 8000 });
-    s.atualizarCarteira(id, { valorDiarioCentavos: -100 });
-    expect(s.dados.carteiras[id]!.valorDiarioCentavos).toBe(0);
+    s.atualizarCarteira(id, { nome: 'Conta Corrente', proximaRenda: '2026-09-05' });
+    expect(s.dados.carteiras[id]).toMatchObject({ nome: 'Conta Corrente', proximaRenda: '2026-09-05' });
+    s.atualizarCarteira(id, { proximaRenda: null });
+    expect(s.dados.carteiras[id]!.proximaRenda).toBeNull();
   });
 
   it('removerCarteira soft-deleta e troca a ativa; nunca remove a última', () => {
     const s = store();
     const c1 = s.carteiraAtualId;
-    const c2 = s.adicionarCarteira('Vale', 4000).id;
+    const c2 = s.adicionarCarteira('Vale').id;
     s.irParaCarteira(c2);
     s.removerCarteira(c2);
     expect(s.dados.carteiras[c2]!.deleted).toBe(true);
@@ -167,7 +167,7 @@ describe('backup: exportar / importar', () => {
     });
     const s = store();
     await s.importar(v1);
-    expect(s.dados.version).toBe(5);
+    expect(s.dados.version).toBe(6);
     expect(s.dados.lancamentos['a']!.tipo).toBe('saida');
     const carteiraId = Object.keys(s.dados.carteiras)[0]!;
     expect(s.dados.lancamentos['a']!.carteiraId).toBe(carteiraId); // movido pra Corrente

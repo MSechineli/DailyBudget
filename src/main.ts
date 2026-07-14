@@ -1,19 +1,17 @@
 import Alpine from 'alpinejs';
 import { Store, type Recorrencia } from './store.ts';
 import {
-  agregadoMesDe,
-  calcularMesDe,
   carteirasVivas,
-  custoDiarioMedio,
   itensDoMes,
-  saldoInicialMes,
-  valorDiario,
+  previsaoDe,
+  projecaoDe,
   type ItemMes,
+  type Previsao,
+  type Projecao,
 } from './data/derive.ts';
-import type { DiaCalculado } from './data/domain.ts';
 import type { Carteira } from './data/schema.ts';
 import { formatBRL, parseBRLToCentavos } from './data/money.ts';
-import { hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
+import { adicionarDias, hojeISO, mesKeyDeData, parseMesKey, toMesKey } from './data/dates.ts';
 import type { TipoLancamento } from './data/schema.ts';
 import { registerSW } from 'virtual:pwa-register';
 import './style.css';
@@ -23,8 +21,8 @@ type ModalModo = 'novo' | 'editarSerie' | 'editarLancamento';
 
 interface ModalForm {
   tipo: TipoLancamento;
-  data: string; // 'YYYY-MM-DD'
-  valor: string; // texto BRL, ex.: "19,90"
+  data: string;
+  valor: string;
   descricao: string;
   recorrenciaTipo: 'nenhuma' | 'nMeses' | 'indefinida';
   recorrenciaMeses: string;
@@ -34,61 +32,59 @@ interface CarteiraForm {
   modo: 'nova' | 'editar';
   id: string | null;
   nome: string;
-  valorDiario: string; // texto BRL
+  proximaRenda: string; // 'YYYY-MM-DD' ou ''
 }
 
-// App financeiro com múltiplas CARTEIRAS. Duas abas por carteira: Extrato (lista
-// clássica de lançamentos) e Diário (a visualização de valor diário rolante).
-// Cada carteira tem um valor diário manual.
-//
-// IMPORTANTE: todo acesso ao store é via `this.store` (o proxy reativo do
-// Alpine), nunca por variável de closure — senão o re-render não dispara.
+// App financeiro com PREVISÃO. Cada carteira tem Extrato (lançamentos) e Diário
+// (painel de previsão: saldo, orçamento/dia = saldo ÷ dias até a renda, ISF,
+// data que o dinheiro acaba, projeção verde/vermelho). Ver DOMINIO.md.
 function app() {
   return {
     store: new Store(),
     aba: 'diario' as Aba,
     hoje: hojeISO(),
 
-    // ---- overlays ----
     modalAberto: false,
     modalModo: 'novo' as ModalModo,
     modalAlvoId: null as string | null,
     modalForm: {
-      tipo: 'saida',
-      data: hojeISO(),
-      valor: '',
-      descricao: '',
-      recorrenciaTipo: 'nenhuma',
-      recorrenciaMeses: '3',
+      tipo: 'saida', data: hojeISO(), valor: '', descricao: '',
+      recorrenciaTipo: 'nenhuma', recorrenciaMeses: '3',
     } as ModalForm,
 
     carteirasAberto: false,
     carteiraFormAberto: false,
-    carteiraForm: { modo: 'nova', id: null, nome: '', valorDiario: '' } as CarteiraForm,
+    carteiraForm: { modo: 'nova', id: null, nome: '', proximaRenda: '' } as CarteiraForm,
 
     async init() {
       await this.store.init();
     },
 
-    // ---- helpers de exibição ----
     fmt: formatBRL,
 
     get pronto(): boolean {
       return this.store.estado === 'pronto';
     },
-
-    /** id da carteira ativa (atalho). */
     get cid(): string {
       return this.store.carteiraAtualId;
     },
-
     get mesLabel(): string {
       const { ano, mes } = parseMesKey(this.store.mesAtual);
-      const nomes = [
-        'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-        'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
-      ];
+      const nomes = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+        'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
       return `${nomes[mes - 1]} / ${ano}`;
+    },
+    /** dd/mm/aaaa de uma data ISO. */
+    dataBR(iso: string | null): string {
+      if (!iso) return '—';
+      return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+    },
+    /** dd/mm de uma data ISO (Extrato). */
+    diaMes(data: string): string {
+      return `${data.slice(8, 10)}/${data.slice(5, 7)}`;
+    },
+    plain(centavos: number): string {
+      return centavos ? formatBRL(centavos).replace('R$', '').trim() : '';
     },
 
     // ---- carteiras ----
@@ -98,40 +94,36 @@ function app() {
     get carteiraNome(): string {
       return this.store.carteiraAtual?.nome ?? '—';
     },
-    /** Valor diário (manual) da carteira ativa, formatado. */
-    get valorDiarioFmt(): string {
-      return this.pronto ? formatBRL(valorDiario(this.store.dados, this.cid)) : '—';
-    },
     selecionarCarteira(id: string) {
       this.store.irParaCarteira(id);
       this.carteirasAberto = false;
     },
     abrirNovaCarteira() {
-      this.carteiraForm = { modo: 'nova', id: null, nome: '', valorDiario: '' };
+      this.carteiraForm = { modo: 'nova', id: null, nome: '', proximaRenda: '' };
       this.carteiraFormAberto = true;
     },
     abrirEditarCarteira(c: Carteira) {
-      this.carteiraForm = {
-        modo: 'editar',
-        id: c.id,
-        nome: c.nome,
-        valorDiario: this.plain(c.valorDiarioCentavos),
-      };
+      this.carteiraForm = { modo: 'editar', id: c.id, nome: c.nome, proximaRenda: c.proximaRenda ?? '' };
       this.carteiraFormAberto = true;
+    },
+    /** Abre o form da carteira ativa (atalho do Diário pra definir a próxima renda). */
+    editarCarteiraAtiva() {
+      if (this.store.carteiraAtual) this.abrirEditarCarteira(this.store.carteiraAtual);
     },
     salvarCarteira() {
       const nome = this.carteiraForm.nome.trim();
       if (!nome) return;
-      const valor = parseBRLToCentavos(this.carteiraForm.valorDiario) ?? 0;
+      const renda = this.carteiraForm.proximaRenda || null;
       if (this.carteiraForm.modo === 'nova') {
-        this.store.adicionarCarteira(nome, valor);
+        this.store.adicionarCarteira(nome, renda);
       } else if (this.carteiraForm.id) {
-        this.store.atualizarCarteira(this.carteiraForm.id, { nome, valorDiarioCentavos: valor });
+        this.store.atualizarCarteira(this.carteiraForm.id, { nome, proximaRenda: renda });
       }
       this.carteiraFormAberto = false;
       this.carteirasAberto = false;
     },
-    excluirCarteira(c: Carteira) {
+    excluirCarteira(c: Carteira | undefined) {
+      if (!c) return;
       if (this.carteiras.length <= 1) {
         alert('Você precisa de pelo menos uma carteira.');
         return;
@@ -141,40 +133,108 @@ function app() {
       this.carteiraFormAberto = false;
     },
 
-    // ---- resumo diário ----
-    get custoDiarioFmt(): string {
-      if (!this.pronto) return '—';
-      return formatBRL(Math.round(custoDiarioMedio(this.store.dados, this.cid, this.store.mesAtual)));
+    // ---- previsão (Diário) ----
+    get previsao(): Previsao | null {
+      return this.pronto ? previsaoDe(this.store.dados, this.cid, this.hoje) : null;
     },
-    get porSemanaFmt(): string {
-      if (!this.pronto) return '—';
-      return formatBRL(
-        Math.round(custoDiarioMedio(this.store.dados, this.cid, this.store.mesAtual) * 7),
-      );
+    get temRenda(): boolean {
+      return (this.previsao?.diasAteRenda ?? null) !== null;
     },
-    get saldoFinalFmt(): string {
-      if (!this.pronto) return '—';
-      return formatBRL(agregadoMesDe(this.store.dados, this.cid, this.store.mesAtual).saldoFinalCentavos);
+    get saldoAtualFmt(): string {
+      return this.previsao ? formatBRL(this.previsao.saldoAtualCentavos) : '—';
     },
-    get saldoInicialFmt(): string {
-      if (!this.pronto) return '—';
-      return formatBRL(saldoInicialMes(this.store.dados, this.cid, this.store.mesAtual));
+    get saldoNegativo(): boolean {
+      return (this.previsao?.saldoAtualCentavos ?? 0) < 0;
+    },
+    get orcamentoFmt(): string {
+      const c = this.previsao?.orcamentoDiarioCentavos;
+      return c === null || c === undefined ? '—' : formatBRL(c);
+    },
+    get mediaFmt(): string {
+      return this.previsao ? formatBRL(this.previsao.mediaDiariaCentavos) : '—';
+    },
+    /** Texto do desvio: "R$ X acima/abaixo" do orçamento (ou '—'). */
+    get desvioTexto(): string {
+      const d = this.previsao?.desvioCentavos;
+      if (d === null || d === undefined) return '—';
+      if (d === 0) return 'no orçamento';
+      return `${formatBRL(Math.abs(d))} ${d > 0 ? 'acima' : 'abaixo'}`;
+    },
+    get desvioRuim(): boolean {
+      return (this.previsao?.desvioCentavos ?? 0) > 0; // gastando acima = ruim
+    },
+    get diasAteRendaTexto(): string {
+      const d = this.previsao?.diasAteRenda;
+      return d === null || d === undefined ? '—' : `${d} ${d === 1 ? 'dia' : 'dias'}`;
+    },
+    get dataAcabaFmt(): string {
+      return this.dataBR(this.previsao?.dataQueAcaba ?? null);
+    },
+    /** "N dias de folga" (verde) / "N dias de déficit" (vermelho) / '—'. */
+    get folgaTexto(): string {
+      const f = this.previsao?.folgaDeficitDias;
+      if (f === null || f === undefined) return '—';
+      if (f === 0) return 'no limite';
+      const n = Math.abs(f);
+      return `${n} ${n === 1 ? 'dia' : 'dias'} de ${f > 0 ? 'folga' : 'déficit'}`;
+    },
+    get folgaRuim(): boolean {
+      return (this.previsao?.folgaDeficitDias ?? 0) < 0;
+    },
+    get isfLabel(): string {
+      return this.previsao?.isf.label ?? '—';
+    },
+    /** Classe de cor do ISF: bom (verde) / atencao (amarelo) / ruim (vermelho). */
+    get isfClasse(): string {
+      const n = this.previsao?.isf.nivel;
+      if (n === 'excelente' || n === 'seguro') return 'isf-bom';
+      if (n === 'atencao') return 'isf-atencao';
+      return 'isf-ruim';
+    },
+    get proximaRendaFmt(): string {
+      return this.dataBR(this.previsao?.proximaRenda ?? null);
     },
 
-    // ---- quanto posso gastar (hoje / dia / semana) ----
-    get diaDeHoje(): DiaCalculado | null {
-      return this.dias.find((d) => d.data === this.hoje) ?? null;
+    // ---- gráfico de projeção (duas linhas) ----
+    get projecao(): Projecao | null {
+      return this.pronto ? projecaoDe(this.store.dados, this.cid, this.hoje) : null;
     },
-    get disponivelHojeFmt(): string {
-      const hoje = this.diaDeHoje;
-      return hoje ? formatBRL(hoje.saldoCentavos) : '—';
-    },
-    get disponivelHojeVermelho(): boolean {
-      const hoje = this.diaDeHoje;
-      return hoje ? hoje.saldoCentavos < 0 : false;
+    get graficoProj(): {
+      w: number; h: number; real: string; realArea: string; orc: string; zeroY: number; zeroFrac: number;
+    } | null {
+      const proj = this.projecao;
+      if (!proj || proj.dias < 1) return null;
+      const w = 300, h = 90, pad = 6;
+      const real = proj.ritmoReal, orc = proj.ritmoOrcamento;
+      const todos = [...real, ...orc, 0];
+      const min = Math.min(...todos), max = Math.max(...todos);
+      const span = max - min || 1;
+      const n = real.length;
+      const x = (i: number) => pad + (i / (n - 1)) * (w - 2 * pad);
+      const y = (v: number) => pad + (1 - (v - min) / span) * (h - 2 * pad);
+      const linha = (arr: number[]) =>
+        arr.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      const zeroY = y(0);
+      const realArea =
+        `M${x(0).toFixed(1)},${zeroY.toFixed(1)} ` +
+        real.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ') +
+        ` L${x(n - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
+      return { w, h, real: linha(real), realArea, orc: linha(orc), zeroY, zeroFrac: zeroY / h };
     },
 
-    // ---- Extrato: lançamentos do mês (avulsos + séries) ----
+    /** Projeção dia a dia (hoje → próxima renda): data + saldo projetado + verde/vermelho. */
+    get diasProjecao(): { data: string; saldoCentavos: number; status: 'verde' | 'vermelho'; hoje: boolean }[] {
+      const proj = this.projecao;
+      if (!proj) return [];
+      return proj.ritmoReal.map((saldo, i) => ({
+        data: adicionarDias(this.hoje, i),
+        saldoCentavos: saldo,
+        status: saldo >= 0 ? 'verde' : 'vermelho',
+        hoje: i === 0,
+      }));
+    },
+
+    // ---- Extrato ----
     get itensMes(): ItemMes[] {
       return this.pronto ? itensDoMes(this.store.dados, this.cid, this.store.mesAtual) : [];
     },
@@ -191,12 +251,8 @@ function app() {
       this.modalModo = 'editarSerie';
       this.modalAlvoId = item.id;
       this.modalForm = {
-        tipo: item.tipo,
-        data: item.data,
-        valor: this.plain(item.valorCentavos),
-        descricao: item.descricao,
-        recorrenciaTipo: 'nenhuma',
-        recorrenciaMeses: '3',
+        tipo: item.tipo, data: item.data, valor: this.plain(item.valorCentavos),
+        descricao: item.descricao, recorrenciaTipo: 'nenhuma', recorrenciaMeses: '3',
       };
       this.modalAberto = true;
     },
@@ -205,12 +261,8 @@ function app() {
       this.modalModo = 'editarLancamento';
       this.modalAlvoId = item.id;
       this.modalForm = {
-        tipo: item.tipo,
-        data: item.data,
-        valor: this.plain(item.valorCentavos),
-        descricao: item.descricao,
-        recorrenciaTipo: 'nenhuma',
-        recorrenciaMeses: '3',
+        tipo: item.tipo, data: item.data, valor: this.plain(item.valorCentavos),
+        descricao: item.descricao, recorrenciaTipo: 'nenhuma', recorrenciaMeses: '3',
       };
       this.modalAberto = true;
     },
@@ -233,16 +285,12 @@ function app() {
     dataPadraoNoMes(): string {
       return mesKeyDeData(this.hoje) === this.store.mesAtual ? this.hoje : `${this.store.mesAtual}-01`;
     },
-    abrirModalNovo(data?: string, tipo?: TipoLancamento) {
+    abrirModalNovo(tipo?: TipoLancamento) {
       this.modalModo = 'novo';
       this.modalAlvoId = null;
       this.modalForm = {
-        tipo: tipo ?? 'saida',
-        data: data ?? this.dataPadraoNoMes(),
-        valor: '',
-        descricao: '',
-        recorrenciaTipo: 'nenhuma',
-        recorrenciaMeses: '3',
+        tipo: tipo ?? 'saida', data: this.dataPadraoNoMes(), valor: '', descricao: '',
+        recorrenciaTipo: 'nenhuma', recorrenciaMeses: '3',
       };
       this.modalAberto = true;
     },
@@ -262,48 +310,35 @@ function app() {
               ? 'indefinida'
               : { meses: Math.max(1, Math.round(Number(this.modalForm.recorrenciaMeses) || 1)) };
         this.store.adicionarLancamentoComRecorrencia({
-          data: this.modalForm.data,
-          tipo: this.modalForm.tipo,
-          valorCentavos,
-          descricao: this.modalForm.descricao,
-          recorrencia,
+          data: this.modalForm.data, tipo: this.modalForm.tipo, valorCentavos,
+          descricao: this.modalForm.descricao, recorrencia,
         });
       } else if (this.modalModo === 'editarSerie' && this.modalAlvoId) {
         this.store.editarSerieAPartir(this.modalAlvoId, this.store.mesAtual, {
-          valorCentavos,
-          descricao: this.modalForm.descricao,
+          valorCentavos, descricao: this.modalForm.descricao,
         });
       } else if (this.modalModo === 'editarLancamento' && this.modalAlvoId) {
         this.store.atualizarLancamento(this.modalAlvoId, {
-          tipo: this.modalForm.tipo,
-          data: this.modalForm.data,
-          valorCentavos,
+          tipo: this.modalForm.tipo, data: this.modalForm.data, valorCentavos,
           descricao: this.modalForm.descricao,
         });
       }
       this.fecharModal();
     },
 
-    /** Valor pra exibição em input (reais, sem "R$"); vazio quando 0. */
-    plain(centavos: number): string {
-      return centavos ? formatBRL(centavos).replace('R$', '').trim() : '';
-    },
-
     // ---- backup ----
     mensagemBackup: '' as string,
-
     exportar() {
       const json = JSON.stringify(this.store.exportar(), null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `gastos-${hojeISO()}.json`;
+      a.download = `financas-${hojeISO()}.json`;
       a.click();
       URL.revokeObjectURL(url);
       this.mensagemBackup = 'Backup exportado ✓';
     },
-
     async importar(e: Event) {
       const input = e.target as HTMLInputElement;
       const file = input.files?.[0];
@@ -319,63 +354,7 @@ function app() {
       }
     },
 
-    // ---- planilha diária ----
-    get dias(): DiaCalculado[] {
-      return this.pronto ? calcularMesDe(this.store.dados, this.cid, this.store.mesAtual) : [];
-    },
-
-    /** Geometria do gráfico de saldo do mês (SVG inline). */
-    get grafico(): {
-      w: number;
-      h: number;
-      linha: string;
-      area: string;
-      zeroY: number;
-      zeroFrac: number;
-      hojeX: number | null;
-    } | null {
-      const dias = this.dias;
-      if (dias.length < 2) return null;
-      const w = 300;
-      const h = 90;
-      const pad = 6;
-      const saldos = dias.map((d) => d.saldoCentavos);
-      const min = Math.min(0, ...saldos);
-      const max = Math.max(0, ...saldos);
-      const span = max - min || 1;
-      const n = dias.length;
-      const x = (i: number) => pad + (i / (n - 1)) * (w - 2 * pad);
-      const y = (v: number) => pad + (1 - (v - min) / span) * (h - 2 * pad);
-      const pts = saldos.map((v, i) => [x(i), y(v)] as const);
-      const linha = pts
-        .map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
-        .join(' ');
-      const zeroY = y(0);
-      const area =
-        `M${x(0).toFixed(1)},${zeroY.toFixed(1)} ` +
-        pts.map((p) => `L${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') +
-        ` L${x(n - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
-      const hojeIdx = dias.findIndex((d) => d.data === this.hoje);
-      return { w, h, linha, area, zeroY, zeroFrac: zeroY / h, hojeX: hojeIdx >= 0 ? x(hojeIdx) : null };
-    },
-    ehHoje(data: string): boolean {
-      return data === this.hoje;
-    },
-    diaMes(data: string): string {
-      return `${data.slice(8, 10)}/${data.slice(5, 7)}`;
-    },
-    celulaFmt(dia: DiaCalculado, tipo: TipoLancamento): string {
-      const c = tipo === 'saida' ? dia.saidasCentavos : dia.entradasCentavos;
-      return c ? this.fmt(c) : '—';
-    },
-    celulaTemValor(dia: DiaCalculado, tipo: TipoLancamento): boolean {
-      return (tipo === 'saida' ? dia.saidasCentavos : dia.entradasCentavos) > 0;
-    },
-    abrirDia(dia: DiaCalculado, tipo: TipoLancamento) {
-      this.abrirModalNovo(dia.data, tipo);
-    },
-
-    // ---- navegação de mês ----
+    // ---- navegação de mês (Extrato) ----
     mudarMes(delta: number) {
       const { ano, mes } = parseMesKey(this.store.mesAtual);
       const total = ano * 12 + (mes - 1) + delta;
@@ -384,18 +363,12 @@ function app() {
   };
 }
 
-// Expõe o factory e liga o Alpine.
 (window as any).Alpine = Alpine;
 Alpine.data('app', app);
 Alpine.start();
 
-// Service worker (PWA, registerType 'autoUpdate'): registramos manualmente pra
-// poder checar atualização com frequência. Sem isso, uma aba já aberta pode
-// demorar MUITO pra perceber um deploy novo. Com autoUpdate, assim que o SW novo
-// é detectado ele ativa e a página recarrega sozinha (sem F5).
-// Obs: o piso de ~10 min é da CDN do GitHub Pages (cache do sw.js/index.html,
-// não configurável); isso aqui só garante que a aba pega a versão nova assim que
-// a CDN liberar. Pra atualização instantânea, migrar pro Cloudflare Pages.
+// Service worker (PWA autoUpdate): registro manual pra checar update com
+// frequência (60s + no visibilitychange). Ver commit da PWA / DOMINIO.
 const updateSW = registerSW({
   immediate: true,
   onRegisteredSW(_swUrl, registration) {

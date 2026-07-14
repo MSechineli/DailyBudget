@@ -6,11 +6,12 @@ import type { ISODate, MesKey } from './dates.ts';
 // v3: remove config de renda/custos fixos "pra sempre"; salário e gastos
 // fixos viram séries recorrentes.
 // v4: saída avulsa ganha `categoria` (conta vs gasto) — modelo de sobra livre.
-// v5: múltiplas CARTEIRAS, cada uma com um valor diário MANUAL. Sai o modelo de
-// sobra livre / conta vs gasto: cada lançamento pertence a uma carteira e o
-// valor diário é definido pelo usuário. Série ganha `diaDoMes` (vira um
-// lançamento recorrente datado). Ver DOMINIO.md.
-export const SCHEMA_VERSION = 5;
+// v5: múltiplas CARTEIRAS, cada uma com um valor diário MANUAL.
+// v6: sai o valor diário manual; entra a PREVISÃO. A carteira ganha
+// `proximaRenda` (data informada da próxima entrada de dinheiro). O orçamento
+// diário passa a ser DERIVADO (saldo atual ÷ dias até a próxima renda), junto
+// com ISF, data que o dinheiro acaba, folga/déficit. Ver DOMINIO.md.
+export const SCHEMA_VERSION = 6;
 
 // Entrada = dinheiro que ENTRA; Saída = dinheiro que SAI. valorCentavos é
 // sempre positivo — o sinal vem do tipo.
@@ -22,14 +23,15 @@ export interface Config {
 
 /**
  * Carteira = uma "conta" independente (Corrente, Investimento, Vale-alimentação…).
- * `valorDiarioCentavos` é o valor diário (daily budget) definido MANUALMENTE pelo
- * usuário — é a base do orçamento diário rolante daquela carteira. Cada carteira
- * tem seu próprio saldo e rollover; lançamentos/séries pertencem a uma carteira.
+ * `proximaRenda` é a data (informada pelo usuário) da próxima entrada de dinheiro
+ * — é o horizonte do orçamento diário previsto (saldo ÷ dias até a próxima renda)
+ * e da projeção. `null` = ainda não informada. Cada carteira tem seus lançamentos
+ * e séries.
  */
 export interface Carteira {
   id: string;
   nome: string;
-  valorDiarioCentavos: number; // valor diário manual (>= 0)
+  proximaRenda: ISODate | null; // data da próxima renda; null = não informada
   updatedAt: string;
   deleted: boolean;
 }
@@ -79,11 +81,11 @@ export interface AppData {
 }
 
 /** Cria uma carteira com timestamp/soft-delete padrão. */
-export function criarCarteira(nome: string, valorDiarioCentavos = 0): Carteira {
+export function criarCarteira(nome: string, proximaRenda: ISODate | null = null): Carteira {
   return {
     id: novoId('cart'),
     nome: nome.trim(),
-    valorDiarioCentavos: Math.max(0, Math.round(valorDiarioCentavos)),
+    proximaRenda,
     updatedAt: new Date().toISOString(),
     deleted: false,
   };
@@ -91,7 +93,7 @@ export function criarCarteira(nome: string, valorDiarioCentavos = 0): Carteira {
 
 /** Estado inicial de uma instalação nova: uma carteira "Corrente" vazia. */
 export function criarDadosVazios(ano: number): AppData {
-  const corrente = criarCarteira('Corrente', 0);
+  const corrente = criarCarteira('Corrente');
   return {
     version: SCHEMA_VERSION,
     config: { ano },

@@ -1,4 +1,6 @@
 import {
+  adicionarDias,
+  diasEntre,
   diasNoMes,
   mesKeyDeData,
   mesSeguinte,
@@ -7,40 +9,26 @@ import {
   type ISODate,
   type MesKey,
 } from './dates.ts';
-import {
-  agregarMes,
-  calcularMes,
-  montarResumoMes,
-  type DiaCalculado,
-  type ResumoMensalAgregado,
-  type ResumoMes,
-} from './domain.ts';
+import { classificarISF, diasQueDura, projetarSaldos, type ISF } from './domain.ts';
 import type { AppData, Carteira, Lancamento, SerieRecorrente, TipoLancamento } from './schema.ts';
 
-// Ponte entre o AppData persistido e o domínio puro (domain.ts). Tudo é POR
-// CARTEIRA: cada carteira tem seu valor diário manual (a base do orçamento),
-// seus lançamentos e suas séries. Regra 4: derivado on the fly, nada guardado.
+// Ponte entre o AppData e a previsão. Tudo POR CARTEIRA e "a partir de hoje":
+// saldo atual (cumulativo), orçamento diário previsto (saldo ÷ dias até a
+// renda), média de gastos, quanto o dinheiro dura, ISF. Regra 4: derivado on
+// the fly, nada guardado.
 
 // ---- carteiras ----
 
-/** Carteiras vivas (não deletadas), na ordem de inserção. */
 export function carteirasVivas(dados: AppData): Carteira[] {
   return Object.values(dados.carteiras).filter((c) => !c.deleted);
 }
 
-/** Uma carteira por id (mesmo deletada), ou undefined. */
 export function carteira(dados: AppData, carteiraId: string): Carteira | undefined {
   return dados.carteiras[carteiraId];
 }
 
-/** Valor diário manual da carteira (centavos). 0 se a carteira não existir. */
-export function valorDiario(dados: AppData, carteiraId: string): number {
-  return dados.carteiras[carteiraId]?.valorDiarioCentavos ?? 0;
-}
-
 // ---- séries e materialização ----
 
-/** Séries ativas de uma carteira num mês (mesInicio <= mk <= mesFim, ou mesFim null). */
 export function seriesAtivasNoMes(
   dados: AppData,
   carteiraId: string,
@@ -73,14 +61,10 @@ export function lancamentosDoMes(dados: AppData, carteiraId: string, mk: MesKey)
     );
 }
 
-// Só o que o cálculo dia a dia precisa (domain.ts filtra por mês e ignora deletados).
+// Só o que a previsão precisa de cada movimento.
 type Evento = Pick<Lancamento, 'data' | 'tipo' | 'valorCentavos'>;
 
-/**
- * Todos os "eventos" que compõem o mês da carteira: os lançamentos avulsos +
- * as séries ativas materializadas como um lançamento datado (em `diaDoMes`).
- * É o input do `calcularMes` (entrada dilui, saída bate na hora).
- */
+/** Eventos do mês: avulsos + séries ativas materializadas (datadas em diaDoMes). */
 export function eventosDoMes(dados: AppData, carteiraId: string, mk: MesKey): Evento[] {
   const avulsos: Evento[] = lancamentosDoMes(dados, carteiraId, mk).map((l) => ({
     data: l.data,
@@ -93,20 +77,6 @@ export function eventosDoMes(dados: AppData, carteiraId: string, mk: MesKey): Ev
     valorCentavos: s.valorCentavos,
   }));
   return [...avulsos, ...recorrentes];
-}
-
-// ---- resumo / cálculo do mês (por carteira) ----
-
-/** Monta o ResumoMes da carteira: base = valor diário × dias. */
-export function resumoMesDe(dados: AppData, carteiraId: string, mk: MesKey): ResumoMes {
-  const { ano, mes } = parseMesKey(mk);
-  return montarResumoMes(ano, mes, valorDiario(dados, carteiraId));
-}
-
-/** Valor diário da carteira (float, pra exibição). Constante no mês. */
-export function custoDiarioMedio(dados: AppData, carteiraId: string, mk: MesKey): number {
-  const r = resumoMesDe(dados, carteiraId, mk);
-  return r.sobraCentavos / r.diasNoMes;
 }
 
 /** Mês mais antigo com atividade na carteira (avulso ou série), ou null. */
@@ -124,59 +94,119 @@ function mesMaisAntigo(dados: AppData, carteiraId: string): MesKey | null {
   return menor;
 }
 
-/**
- * Saldo inicial de um mês da carteira: saldo acumulado ao final do mês anterior,
- * repetido mês a mês desde a primeira atividade (rollover contínuo, por carteira).
- * Sem atividade antes de `mk`, é 0.
- */
-export function saldoInicialMes(dados: AppData, carteiraId: string, mk: MesKey): number {
+/** Soma dos eventos (por tipo) num intervalo de datas [de, ate], inclusive. */
+function somarEventos(
+  dados: AppData,
+  carteiraId: string,
+  de: ISODate,
+  ate: ISODate,
+): { entradas: number; saidas: number } {
   const anchor = mesMaisAntigo(dados, carteiraId);
-  if (anchor === null || mk <= anchor) return 0;
-
-  let saldo = 0;
-  for (let m = anchor; m < mk; m = mesSeguinte(m)) {
-    const sobra = resumoMesDe(dados, carteiraId, m).sobraCentavos;
-    let entradas = 0;
-    let saidas = 0;
+  let entradas = 0;
+  let saidas = 0;
+  if (anchor === null) return { entradas, saidas };
+  const mkDe = mesKeyDeData(de) > anchor ? mesKeyDeData(de) : anchor;
+  const mkAte = mesKeyDeData(ate);
+  for (let m = mkDe; m <= mkAte; m = mesSeguinte(m)) {
     for (const ev of eventosDoMes(dados, carteiraId, m)) {
+      if (ev.data < de || ev.data > ate) continue;
       if (ev.tipo === 'entrada') entradas += ev.valorCentavos;
       else saidas += ev.valorCentavos;
     }
-    saldo += sobra + entradas - saidas;
   }
-  return saldo;
+  return { entradas, saidas };
 }
 
-/** Calcula o mês inteiro dia a dia (DiaCalculado[]) de uma carteira. */
-export function calcularMesDe(dados: AppData, carteiraId: string, mk: MesKey): DiaCalculado[] {
-  const { ano, mes } = parseMesKey(mk);
-  return calcularMes(
-    ano,
-    mes,
-    resumoMesDe(dados, carteiraId, mk),
-    eventosDoMes(dados, carteiraId, mk),
-    saldoInicialMes(dados, carteiraId, mk),
-  );
+// ---- indicadores da previsão ----
+
+/** Saldo atual da carteira = Σ(entradas − saídas) de tudo com data ≤ hoje. */
+export function saldoAtual(dados: AppData, carteiraId: string, hoje: ISODate): number {
+  const { entradas, saidas } = somarEventos(dados, carteiraId, '0000-01-01', hoje);
+  return entradas - saidas;
 }
 
-/** Agregado mensal (totais + dias no vermelho) de uma carteira. */
-export function agregadoMesDe(dados: AppData, carteiraId: string, mk: MesKey): ResumoMensalAgregado {
-  return agregarMes(calcularMesDe(dados, carteiraId, mk));
+/** Janela (em dias) usada pra estimar o ritmo de gastos. */
+export const JANELA_MEDIA_DIAS = 30;
+
+/** Média diária de gastos: saídas dos últimos 30 dias ÷ 30. */
+export function mediaDiariaGastos(dados: AppData, carteiraId: string, hoje: ISODate): number {
+  const de = adicionarDias(hoje, -(JANELA_MEDIA_DIAS - 1));
+  const { saidas } = somarEventos(dados, carteiraId, de, hoje);
+  return saidas / JANELA_MEDIA_DIAS;
+}
+
+/** Dias até a próxima renda; null se não informada ou já passou (precisa atualizar). */
+export function diasAteRenda(cart: Carteira, hoje: ISODate): number | null {
+  if (!cart.proximaRenda) return null;
+  const d = diasEntre(hoje, cart.proximaRenda);
+  return d > 0 ? d : null;
+}
+
+export interface Previsao {
+  saldoAtualCentavos: number;
+  proximaRenda: ISODate | null;
+  diasAteRenda: number | null;
+  orcamentoDiarioCentavos: number | null; // saldo ÷ dias até a renda
+  mediaDiariaCentavos: number; // últimos 30 dias
+  desvioCentavos: number | null; // média − orçamento (positivo = gastando acima)
+  diasQueDura: number; // pode ser Infinity (sem gastos)
+  dataQueAcaba: ISODate | null; // hoje + diasQueDura (se o dinheiro acaba)
+  folgaDeficitDias: number | null; // diasQueDura − dias até a renda
+  isf: ISF;
+}
+
+/** Monta todos os indicadores de previsão da carteira, "a partir de hoje". */
+export function previsaoDe(dados: AppData, carteiraId: string, hoje: ISODate): Previsao {
+  const cart = dados.carteiras[carteiraId];
+  const saldo = saldoAtual(dados, carteiraId, hoje);
+  const media = mediaDiariaGastos(dados, carteiraId, hoje);
+  const dar = cart ? diasAteRenda(cart, hoje) : null;
+  const orcamento = dar !== null ? saldo / dar : null;
+  const dur = diasQueDura(saldo, media);
+  const dataAcaba = Number.isFinite(dur) && saldo > 0 ? adicionarDias(hoje, Math.floor(dur)) : null;
+  return {
+    saldoAtualCentavos: saldo,
+    proximaRenda: cart?.proximaRenda ?? null,
+    diasAteRenda: dar,
+    orcamentoDiarioCentavos: orcamento !== null ? Math.round(orcamento) : null,
+    mediaDiariaCentavos: Math.round(media),
+    desvioCentavos: orcamento !== null ? Math.round(media - orcamento) : null,
+    diasQueDura: dur,
+    dataQueAcaba: dataAcaba,
+    folgaDeficitDias: dar !== null && Number.isFinite(dur) ? Math.round(dur) - dar : null,
+    isf: classificarISF(dur),
+  };
+}
+
+export interface Projecao {
+  dias: number; // horizonte = dias até a próxima renda
+  ritmoReal: number[]; // saldo projetado pela média de gastos (0..dias)
+  ritmoOrcamento: number[]; // saldo projetado gastando o orçamento recomendado
+}
+
+/** Projeção do saldo até a próxima renda (duas linhas). null se renda não informada. */
+export function projecaoDe(dados: AppData, carteiraId: string, hoje: ISODate): Projecao | null {
+  const cart = dados.carteiras[carteiraId];
+  const dar = cart ? diasAteRenda(cart, hoje) : null;
+  if (dar === null) return null;
+  const saldo = saldoAtual(dados, carteiraId, hoje);
+  const media = mediaDiariaGastos(dados, carteiraId, hoje);
+  return {
+    dias: dar,
+    ritmoReal: projetarSaldos(saldo, media, dar),
+    ritmoOrcamento: projetarSaldos(saldo, saldo / dar, dar),
+  };
 }
 
 // ---- lista do Extrato ----
 
-/** Item do Extrato: lançamento avulso (day-exact) ou ocorrência de série. */
 export type ItemMes = {
   id: string;
   tipo: TipoLancamento;
   valorCentavos: number;
   descricao: string;
   data: ISODate; // avulso: a data; série: a ocorrência daquele mês
-} & (
-  | { origem: 'avulso' }
-  | { origem: 'serie'; serie: SerieRecorrente }
-);
+} & ({ origem: 'avulso' } | { origem: 'serie'; serie: SerieRecorrente });
 
 /** Lista do Extrato da carteira no mês: avulsos + séries (ocorrência), por data. */
 export function itensDoMes(dados: AppData, carteiraId: string, mk: MesKey): ItemMes[] {
@@ -197,7 +227,5 @@ export function itensDoMes(dados: AppData, carteiraId: string, mk: MesKey): Item
     data: dataOcorrencia(s, mk),
     serie: s,
   }));
-  return [...avulsos, ...recorrentes].sort((a, b) =>
-    a.data < b.data ? -1 : a.data > b.data ? 1 : 0,
-  );
+  return [...avulsos, ...recorrentes].sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 }

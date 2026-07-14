@@ -4,16 +4,18 @@ Contexto e decisões de arquitetura deste projeto. Leia antes de escrever códig
 
 ## O que é
 
-App financeiro pessoal com **múltiplas carteiras** (Corrente, Investimento, Vale-
-alimentação…). Cada carteira tem duas visões: **Extrato** (lista clássica de lançamentos)
-e **Valor diário** (orçamento diário rolante). O valor diário é **definido manualmente**
-por carteira; o saldo acumula esse valor por dia, gastos descontam na hora, recebimentos
-diluem, e o saldo rola de um mês pro outro. Carteiras são independentes (saldo/rollover
-por carteira). UI mobile-first (barra inferior de abas).
+App financeiro pessoal de **previsão** (não só registro): responde "quando meu dinheiro
+acaba, quanto posso gastar por dia até a próxima renda, corro risco?". Múltiplas
+**carteiras** (Corrente, Investimento, Vale-alimentação…), cada uma com **Extrato**
+(lançamentos) e **Diário** (painel de previsão: saldo atual, orçamento/dia = saldo ÷
+dias até a próxima renda, média de gastos, ISF, data que o dinheiro acaba, projeção
+verde/vermelho dia a dia). A próxima renda é uma **data informada** por carteira.
+Carteiras são independentes. UI mobile-first (barra inferior de abas), com boa leitura
+no desktop (coluna centralizada).
 
-**A regra de negócio (valor diário, fórmulas de saldo, séries recorrentes, rollover,
-"posso gastar") vive em `DOMINIO.md` — leia lá antes de mexer em `domain.ts`/`derive.ts`.**
-Este arquivo é só arquitetura, stack e convenções.
+**A regra de negócio (saldo atual, orçamento, ISF, projeção, séries) vive em `DOMINIO.md`
+— leia lá antes de mexer em `domain.ts`/`derive.ts`.** Este arquivo é só arquitetura,
+stack e convenções.
 
 ## Arquitetura (sem servidor)
 
@@ -58,13 +60,13 @@ Este arquivo é só arquitetura, stack e convenções.
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "config": { "ano": 2026 },
   "carteiras": {
     "cart_corrente": {
       "id": "cart_corrente",
       "nome": "Corrente",
-      "valorDiarioCentavos": 8000,
+      "proximaRenda": "2026-08-05",
       "updatedAt": "2026-01-01T00:00:00.000Z",
       "deleted": false
     }
@@ -101,11 +103,12 @@ Este arquivo é só arquitetura, stack e convenções.
 
 ### Notas do schema
 
-- **`carteiras`** é um map por `id`. Cada carteira tem `nome` e `valorDiarioCentavos`
-  (o valor diário MANUAL, ≥ 0, base do orçamento). Sempre existe ao menos uma. `config`
-  guarda só o que é app-wide (`ano`).
+- **`carteiras`** é um map por `id`. Cada carteira tem `nome` e `proximaRenda` (data
+  `YYYY-MM-DD` da próxima entrada de dinheiro, ou `null`) — o horizonte do orçamento
+  diário previsto (saldo ÷ dias até a renda) e da projeção. Sempre existe ao menos uma.
+  `config` guarda só o que é app-wide (`ano`).
 - **`carteiraId`** em `Lancamento` e `SerieRecorrente`: a carteira dona. Carteiras são
-  independentes (saldo/rollover por carteira; sem transferência por enquanto).
+  independentes (saldo/previsão por carteira; sem transferência por enquanto).
 - **`series` é um map por `id`.** `mesInicio`/`mesFim` (`"YYYY-MM"`, inclusive; `null` =
   indefinida) + `diaDoMes` (1–31): a série materializa um lançamento datado nesse dia a
   cada mês ativo. Semântica (ativa no mês, split ao editar "daqui pra frente", encerrar)
@@ -121,12 +124,12 @@ Este arquivo é só arquitetura, stack e convenções.
 
 ## Derivações (calcular, não armazenar)
 
-Saldo, status verde/vermelho, rollover e "posso gastar" são **todos derivados** on the
-fly da fonte de verdade (carteiras + lançamentos + séries), por carteira — nunca
-guardados (regra 4). As fórmulas, casos de borda e exemplos trabalhados (fixtures de
-teste) estão em **`DOMINIO.md`**. Implementação pura em `src/data/domain.ts`; a ponte com
-o `AppData` (valor diário da carteira, séries materializadas, rollover) em
-`src/data/derive.ts`.
+Saldo atual, orçamento diário, média, ISF, data que o dinheiro acaba, folga/déficit e a
+projeção verde/vermelho são **todos derivados** on the fly da fonte de verdade
+(carteiras + lançamentos + séries), por carteira, a partir de "hoje" — nunca guardados
+(regra 4). As fórmulas, casos de borda e exemplos trabalhados (fixtures de teste) estão
+em **`DOMINIO.md`**. Matemática pura (ISF, projeção) em `src/data/domain.ts`; a ponte com
+o `AppData` (saldo, séries materializadas, indicadores) em `src/data/derive.ts`.
 
 ## Sync com Drive (client-side)
 

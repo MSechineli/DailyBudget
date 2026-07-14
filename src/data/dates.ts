@@ -66,6 +66,24 @@ export function mesSeguinte(mk: MesKey): MesKey {
   return adicionarMeses(mk, 1);
 }
 
+/** Serial de dias (UTC) de uma data ISO — pra diferenças sem timezone/DST. */
+function serialDias(data: ISODate): number {
+  const { ano, mes, dia } = parseISODate(data);
+  return Math.floor(Date.UTC(ano, mes - 1, dia) / 86_400_000);
+}
+
+/** Número de dias de `a` até `b` (b − a). Positivo se `b` é depois de `a`. */
+export function diasEntre(a: ISODate, b: ISODate): number {
+  return serialDias(b) - serialDias(a);
+}
+
+/** Soma `n` dias a uma data ISO (n pode ser negativo). */
+export function adicionarDias(data: ISODate, n: number): ISODate {
+  const { ano, mes, dia } = parseISODate(data);
+  const d = new Date(Date.UTC(ano, mes - 1, dia + n));
+  return toISODate(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }

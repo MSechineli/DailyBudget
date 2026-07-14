@@ -124,8 +124,8 @@ describe('migrar', () => {
     });
   });
 
-  describe('v4 → v5: carteiras', () => {
-    it('cria carteira Corrente, move lançamentos/séries pra ela, dá diaDoMes e tira categoria', () => {
+  describe('v4 → v6: carteiras + previsão', () => {
+    it('cria carteira Corrente (proximaRenda null), move lançamentos/séries, dá diaDoMes e tira categoria', () => {
       const v4 = {
         version: 4,
         config: { ano: 2026 },
@@ -144,16 +144,35 @@ describe('migrar', () => {
         sync: { driveFileId: null, lastSyncedHash: null },
       };
       const migrado = migrar(v4);
-      expect(migrado.version).toBe(SCHEMA_VERSION);
+      expect(migrado.version).toBe(SCHEMA_VERSION); // 6
 
       const carteiraId = Object.keys(migrado.carteiras)[0]!;
-      expect(migrado.carteiras[carteiraId]).toMatchObject({ nome: 'Corrente', valorDiarioCentavos: 0 });
-      // lançamento: ganhou carteiraId, perdeu categoria
+      // v4→v5 cria a carteira; v5→v6 troca valorDiario por proximaRenda
+      expect(migrado.carteiras[carteiraId]).toMatchObject({ nome: 'Corrente', proximaRenda: null });
+      expect((migrado.carteiras[carteiraId] as any).valorDiarioCentavos).toBeUndefined();
       expect(migrado.lancamentos['a']!.carteiraId).toBe(carteiraId);
       expect((migrado.lancamentos['a'] as any).categoria).toBeUndefined();
-      // série: ganhou carteiraId e diaDoMes
       expect(migrado.series['s']!.carteiraId).toBe(carteiraId);
       expect(migrado.series['s']!.diaDoMes).toBe(1);
+    });
+  });
+
+  describe('v5 → v6: valor diário vira próxima renda', () => {
+    it('troca valorDiarioCentavos por proximaRenda: null em cada carteira', () => {
+      const v5 = {
+        version: 5,
+        config: { ano: 2026 },
+        carteiras: {
+          c1: { id: 'c1', nome: 'Corrente', valorDiarioCentavos: 8000, updatedAt: 'x', deleted: false },
+        },
+        series: {},
+        lancamentos: {},
+        sync: { driveFileId: null, lastSyncedHash: null },
+      };
+      const migrado = migrar(v5);
+      expect(migrado.version).toBe(SCHEMA_VERSION);
+      expect(migrado.carteiras['c1']!.proximaRenda).toBeNull();
+      expect((migrado.carteiras['c1'] as any).valorDiarioCentavos).toBeUndefined();
     });
   });
 });

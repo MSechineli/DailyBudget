@@ -1,17 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  agregadoMesDe,
-  calcularMesDe,
   carteirasVivas,
-  custoDiarioMedio,
-  dataOcorrencia,
+  diasAteRenda,
   eventosDoMes,
   itensDoMes,
-  resumoMesDe,
-  saldoInicialMes,
-  seriesAtivasNoMes,
-  valorDiario,
+  mediaDiariaGastos,
+  previsaoDe,
+  projecaoDe,
+  saldoAtual,
 } from './derive.ts';
+import { adicionarDias } from './dates.ts';
 import {
   criarDadosVazios,
   type AppData,
@@ -21,9 +19,10 @@ import {
 } from './schema.ts';
 
 const TS = '2026-01-01T00:00:00.000Z';
+const HOJE = '2026-07-14';
 
 function cart(p: Partial<Carteira> & { id: string }): Carteira {
-  return { nome: p.id, valorDiarioCentavos: 0, updatedAt: TS, deleted: false, ...p };
+  return { nome: p.id, proximaRenda: null, updatedAt: TS, deleted: false, ...p };
 }
 function lanc(
   p: Pick<Lancamento, 'id' | 'carteiraId' | 'data' | 'tipo' | 'valorCentavos'> & Partial<Lancamento>,
@@ -37,159 +36,117 @@ function serie(
   return { descricao: '', diaDoMes: 1, updatedAt: TS, deleted: false, ...p };
 }
 
-/** Duas carteiras: c1 (valor diário 10000/dia) e c2 (4000/dia). */
+/** c1: entrada 200000 (07-01) − saída 30000 (07-10), saída FUTURA 99999 (07-20). c2 vazia. */
 function base(): AppData {
   const d = criarDadosVazios(2026);
   d.carteiras = {
-    c1: cart({ id: 'c1', nome: 'Corrente', valorDiarioCentavos: 10000 }),
-    c2: cart({ id: 'c2', nome: 'Vale', valorDiarioCentavos: 4000 }),
+    c1: cart({ id: 'c1', nome: 'Corrente', proximaRenda: '2026-08-05' }),
+    c2: cart({ id: 'c2', nome: 'Vale', proximaRenda: null }),
+  };
+  d.lancamentos = {
+    a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-07-01', tipo: 'entrada', valorCentavos: 200000 }),
+    b: lanc({ id: 'b', carteiraId: 'c1', data: '2026-07-10', tipo: 'saida', valorCentavos: 30000 }),
+    f: lanc({ id: 'f', carteiraId: 'c1', data: '2026-07-20', tipo: 'saida', valorCentavos: 99999 }),
   };
   return d;
 }
 
-describe('carteiras / valor diário', () => {
-  it('carteirasVivas ignora deletadas', () => {
+describe('carteirasVivas', () => {
+  it('ignora deletadas', () => {
     const d = base();
     d.carteiras['c2']!.deleted = true;
     expect(carteirasVivas(d).map((c) => c.id)).toEqual(['c1']);
   });
+});
 
-  it('valorDiario e resumo (sobra = valor diário × dias)', () => {
+describe('saldoAtual', () => {
+  it('soma entradas − saídas com data ≤ hoje (ignora futuro)', () => {
     const d = base();
-    expect(valorDiario(d, 'c1')).toBe(10000);
-    const r = resumoMesDe(d, 'c1', '2026-09'); // 30 dias
-    expect(r.sobraCentavos).toBe(300000);
-    expect(r.diasNoMes).toBe(30);
-    expect(custoDiarioMedio(d, 'c1', '2026-09')).toBe(10000);
-    expect(valorDiario(d, 'c2')).toBe(4000);
+    expect(saldoAtual(d, 'c1', HOJE)).toBe(170000); // 200000 − 30000 (a saída de 07-20 não conta)
+    expect(saldoAtual(d, 'c2', HOJE)).toBe(0); // carteira vazia
+  });
+
+  it('inclui as ocorrências de séries até hoje', () => {
+    const d = base();
+    d.series = {
+      s: serie({ id: 's', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 100000, mesInicio: '2026-06', mesFim: null, diaDoMes: 5 }),
+    };
+    // ocorrências 06-05 e 07-05 (≤ 07-14) → +200000
+    expect(saldoAtual(d, 'c1', HOJE)).toBe(170000 + 200000);
   });
 });
 
-describe('seriesAtivasNoMes (por carteira)', () => {
-  it('filtra por carteira, janela e tipo', () => {
+describe('mediaDiariaGastos', () => {
+  it('saídas dos últimos 30 dias ÷ 30', () => {
     const d = base();
-    d.series = {
-      s1: serie({ id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 300000, mesInicio: '2026-01', mesFim: null }),
-      s2: serie({ id: 's2', carteiraId: 'c2', tipo: 'saida', valorCentavos: 5000, mesInicio: '2026-01', mesFim: '2026-03' }),
-    };
-    expect(seriesAtivasNoMes(d, 'c1', '2026-09').map((s) => s.id)).toEqual(['s1']);
-    expect(seriesAtivasNoMes(d, 'c2', '2026-09')).toHaveLength(0); // fora da janela (mesFim 03)
-    expect(seriesAtivasNoMes(d, 'c2', '2026-02').map((s) => s.id)).toEqual(['s2']);
-    expect(seriesAtivasNoMes(d, 'c1', '2026-09', 'saida')).toHaveLength(0);
+    // só a saída de 30000 (07-10) está na janela [06-15, 07-14]
+    expect(mediaDiariaGastos(d, 'c1', HOJE)).toBe(30000 / 30);
   });
 });
 
-describe('eventosDoMes (materializa séries datadas + avulsos)', () => {
-  it('dataOcorrencia usa diaDoMes, clampado ao tamanho do mês', () => {
-    const s = serie({ id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 26000, mesInicio: '2026-01', mesFim: null, diaDoMes: 5 });
-    expect(dataOcorrencia(s, '2026-09')).toBe('2026-09-05');
-    s.diaDoMes = 31;
-    expect(dataOcorrencia(s, '2026-02')).toBe('2026-02-28'); // clampa em fevereiro
-  });
-
-  it('série vira um evento datado em diaDoMes', () => {
+describe('diasAteRenda', () => {
+  it('conta os dias até a próxima renda; null se não informada', () => {
     const d = base();
-    d.series = {
-      s1: serie({ id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 26000, mesInicio: '2026-01', mesFim: null, diaDoMes: 5 }),
-    };
-    expect(eventosDoMes(d, 'c1', '2026-09')).toEqual([
-      { data: '2026-09-05', tipo: 'entrada', valorCentavos: 26000 },
-    ]);
+    expect(diasAteRenda(d.carteiras['c1']!, HOJE)).toBe(22); // 07-14 → 08-05
+    expect(diasAteRenda(d.carteiras['c2']!, HOJE)).toBeNull();
   });
-
-  it('mistura avulsos + séries da mesma carteira', () => {
+  it('null se a renda já passou (precisa atualizar)', () => {
     const d = base();
-    d.series = {
-      s1: serie({ id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 26000, mesInicio: '2026-01', mesFim: null, diaDoMes: 5 }),
-    };
-    d.lancamentos = {
-      a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-09-10', tipo: 'saida', valorCentavos: 3000 }),
-      b: lanc({ id: 'b', carteiraId: 'c2', data: '2026-09-10', tipo: 'saida', valorCentavos: 9999 }), // outra carteira
-    };
-    const ev = eventosDoMes(d, 'c1', '2026-09');
-    expect(ev).toHaveLength(2); // avulso a + série s1; b é de c2
-    expect(ev.some((e) => e.valorCentavos === 9999)).toBe(false);
+    d.carteiras['c1']!.proximaRenda = '2026-07-01';
+    expect(diasAteRenda(d.carteiras['c1']!, HOJE)).toBeNull();
   });
 });
 
-describe('calcularMesDe (por carteira, mecânica saída imediata / entrada diluída)', () => {
-  it('base valor diário; sem lançamentos fecha em valorDiario × dias', () => {
-    const d = base();
-    const dias = calcularMesDe(d, 'c1', '2026-09');
-    expect(dias[0]!.saldoCentavos).toBe(10000);
-    expect(dias[29]!.saldoCentavos).toBe(300000);
+describe('previsaoDe', () => {
+  it('monta os indicadores da carteira', () => {
+    const p = previsaoDe(base(), 'c1', HOJE);
+    expect(p.saldoAtualCentavos).toBe(170000);
+    expect(p.diasAteRenda).toBe(22);
+    expect(p.orcamentoDiarioCentavos).toBe(Math.round(170000 / 22)); // 7727
+    expect(p.mediaDiariaCentavos).toBe(1000); // 30000/30
+    expect(p.desvioCentavos).toBe(Math.round(1000 - 170000 / 22)); // negativo: abaixo do orçamento
+    expect(p.diasQueDura).toBe(170); // 170000 / 1000
+    expect(p.folgaDeficitDias).toBe(170 - 22);
+    expect(p.dataQueAcaba).toBe(adicionarDias(HOJE, 170));
+    expect(p.isf.nivel).toBe('excelente');
   });
 
-  it('saída avulsa bate cheia no dia', () => {
-    const d = base();
-    d.lancamentos = {
-      a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
-    };
-    const dias = calcularMesDe(d, 'c1', '2026-09');
-    expect(dias[0]!.saldoCentavos).toBe(-15000); // 10000 − 25000
-  });
-
-  it('série (entrada) materializada entra e fecha exato', () => {
-    const d = base();
-    d.series = {
-      s1: serie({ id: 's1', carteiraId: 'c1', tipo: 'entrada', valorCentavos: 26000, mesInicio: '2026-09', mesFim: null, diaDoMes: 5 }),
-    };
-    const dias = calcularMesDe(d, 'c1', '2026-09');
-    // fecha: 300000 (base) + 26000 (série entrada)
-    expect(dias[29]!.saldoCentavos).toBe(326000);
-  });
-
-  it('carteiras são isoladas: lançamento de c1 não afeta c2', () => {
-    const d = base();
-    d.lancamentos = {
-      a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-09-01', tipo: 'saida', valorCentavos: 25000 }),
-    };
-    const diasC2 = calcularMesDe(d, 'c2', '2026-09');
-    expect(diasC2[0]!.saldoCentavos).toBe(4000); // só o valor diário de c2
-    expect(diasC2[29]!.saldoCentavos).toBe(120000); // 4000 × 30
+  it('carteira sem gastos e sem renda: dura pra sempre, sem orçamento/projeção', () => {
+    const p = previsaoDe(base(), 'c2', HOJE);
+    expect(p.saldoAtualCentavos).toBe(0);
+    expect(p.diasAteRenda).toBeNull();
+    expect(p.orcamentoDiarioCentavos).toBeNull();
+    expect(p.diasQueDura).toBe(Infinity);
+    expect(p.dataQueAcaba).toBeNull();
+    expect(p.folgaDeficitDias).toBeNull();
+    expect(p.isf.nivel).toBe('excelente');
   });
 });
 
-describe('saldoInicialMes (rollover por carteira)', () => {
-  it('0 sem atividade anterior (mesmo com valor diário)', () => {
-    const d = base();
-    expect(saldoInicialMes(d, 'c1', '2026-09')).toBe(0);
+describe('projecaoDe', () => {
+  it('duas linhas (real e orçamento) até a próxima renda', () => {
+    const proj = projecaoDe(base(), 'c1', HOJE)!;
+    expect(proj.dias).toBe(22);
+    expect(proj.ritmoReal).toHaveLength(23); // 0..22
+    expect(proj.ritmoReal[0]).toBe(170000);
+    expect(proj.ritmoReal[22]).toBe(170000 - 1000 * 22); // ritmo real (média)
+    expect(proj.ritmoOrcamento[22]).toBe(0); // orçamento fecha em 0 na renda
   });
 
-  it('carrega o saldo do mês anterior a partir da primeira atividade', () => {
-    const d = base();
-    d.lancamentos = {
-      a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-09-15', tipo: 'saida', valorCentavos: 30000 }),
-    };
-    // setembro fecha em 300000 − 30000 = 270000 → outubro herda isso
-    expect(saldoInicialMes(d, 'c1', '2026-10')).toBe(270000);
-    // c2 (sem atividade) segue em 0
-    expect(saldoInicialMes(d, 'c2', '2026-10')).toBe(0);
-  });
-
-  it('calcularMesDe reflete o saldo inicial herdado (imediato no dia 1)', () => {
-    const d = base();
-    d.lancamentos = {
-      a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-09-15', tipo: 'saida', valorCentavos: 30000 }),
-    };
-    const dias = calcularMesDe(d, 'c1', '2026-10'); // out: 31 dias, valor diário 10000
-    expect(dias[0]!.saldoCentavos).toBe(270000 + 10000);
-    expect(agregadoMesDe(d, 'c1', '2026-10').saldoFinalCentavos).toBe(270000 + 310000);
+  it('null quando não há próxima renda', () => {
+    expect(projecaoDe(base(), 'c2', HOJE)).toBeNull();
   });
 });
 
-describe('itensDoMes (Extrato)', () => {
-  it('lista avulsos + ocorrências de série, ordenados por data', () => {
+describe('eventosDoMes / itensDoMes', () => {
+  it('materializa séries datadas e lista o Extrato por data', () => {
     const d = base();
     d.series = {
-      s1: serie({ id: 's1', carteiraId: 'c1', tipo: 'saida', valorCentavos: 5000, mesInicio: '2026-01', mesFim: null, diaDoMes: 20 }),
+      s: serie({ id: 's', carteiraId: 'c1', tipo: 'saida', valorCentavos: 5000, mesInicio: '2026-01', mesFim: null, diaDoMes: 20 }),
     };
-    d.lancamentos = {
-      a: lanc({ id: 'a', carteiraId: 'c1', data: '2026-09-05', tipo: 'saida', valorCentavos: 3000, descricao: 'mercado' }),
-      z: lanc({ id: 'z', carteiraId: 'c2', data: '2026-09-01', tipo: 'saida', valorCentavos: 1, descricao: 'outra' }),
-    };
-    const itens = itensDoMes(d, 'c1', '2026-09');
-    expect(itens.map((i) => i.id)).toEqual(['a', 's1']); // 05 antes de 20; c2 fora
-    expect(itens[1]!.origem).toBe('serie');
+    expect(eventosDoMes(d, 'c1', '2026-07').some((e) => e.data === '2026-07-20')).toBe(true);
+    const itens = itensDoMes(d, 'c1', '2026-07');
+    // avulsos 01, 10, 20 + série 20 → ordenados por data
+    expect(itens.map((i) => i.data)).toEqual(['2026-07-01', '2026-07-10', '2026-07-20', '2026-07-20']);
   });
 });

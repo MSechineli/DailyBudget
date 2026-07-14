@@ -34,89 +34,99 @@
             <span class="chevron">▾</span>
           </button>
 
-          <!-- Navegação de mês (compartilhada pelas duas abas) -->
-          <header class="mes-nav">
+          <!-- Navegação de mês (só no Extrato) -->
+          <header class="mes-nav" x-show="aba === 'extrato'">
             <button @click="mudarMes(-1)" aria-label="Mês anterior">‹</button>
             <h1 x-text="mesLabel"></h1>
             <button @click="mudarMes(1)" aria-label="Próximo mês">›</button>
           </header>
 
-          <!-- ============ ABA: DIÁRIO ============ -->
+          <!-- ============ ABA: DIÁRIO (previsão) ============ -->
           <div x-show="aba === 'diario'">
-            <!-- Destaque: quanto posso gastar -->
+            <!-- Saldo atual + ISF -->
             <section class="destaque">
               <div class="destaque-hoje">
-                <span>Posso gastar hoje</span>
-                <strong :class="{ negativo: disponivelHojeVermelho }" x-text="disponivelHojeFmt"></strong>
+                <span>Saldo atual</span>
+                <strong :class="{ negativo: saldoNegativo }" x-text="saldoAtualFmt"></strong>
               </div>
-              <div class="destaque-sub">
-                <div><span>Valor diário</span><strong x-text="custoDiarioFmt"></strong></div>
-                <div><span>Por semana</span><strong x-text="porSemanaFmt"></strong></div>
+              <div class="isf" :class="isfClasse">
+                <span>Segurança financeira</span>
+                <strong x-text="isfLabel"></strong>
               </div>
             </section>
 
-            <!-- Gráfico do saldo no mês -->
-            <template x-if="grafico">
+            <!-- Próxima renda / CTA pra definir -->
+            <button class="renda-linha" @click="editarCarteiraAtiva()">
+              <template x-if="temRenda">
+                <span>Próxima renda: <strong x-text="proximaRendaFmt"></strong> · <span
+                    x-text="diasAteRendaTexto"></span> ✎</span>
+              </template>
+              <template x-if="!temRenda">
+                <span class="renda-cta">Defina a próxima renda pra ver o orçamento e a projeção ›</span>
+              </template>
+            </button>
+
+            <!-- Gráfico de projeção (ritmo real verde→vermelho + orçamento tracejado) -->
+            <template x-if="graficoProj">
               <section class="grafico-wrap">
-                <svg class="grafico" :viewBox="`0 0 ${grafico.w} ${grafico.h}`" preserveAspectRatio="none"
-                  role="img" aria-label="Saldo ao longo do mês">
+                <svg class="grafico" :viewBox="`0 0 ${graficoProj.w} ${graficoProj.h}`" preserveAspectRatio="none"
+                  role="img" aria-label="Projeção do saldo até a próxima renda">
                   <defs>
-                    <linearGradient id="gradSaldo" x1="0" y1="0" x2="0" :y2="grafico.h"
+                    <linearGradient id="gradSaldo" x1="0" y1="0" x2="0" :y2="graficoProj.h"
                       gradientUnits="userSpaceOnUse">
                       <stop offset="0" class="stop-verde"></stop>
-                      <stop :offset="grafico.zeroFrac" class="stop-verde"></stop>
-                      <stop :offset="grafico.zeroFrac" class="stop-vermelho"></stop>
+                      <stop :offset="graficoProj.zeroFrac" class="stop-verde"></stop>
+                      <stop :offset="graficoProj.zeroFrac" class="stop-vermelho"></stop>
                       <stop offset="1" class="stop-vermelho"></stop>
                     </linearGradient>
                   </defs>
-                  <line class="grafico-zero" x1="0" :y1="grafico.zeroY" :x2="grafico.w" :y2="grafico.zeroY"></line>
-                  <path :d="grafico.area" fill="url(#gradSaldo)" opacity="0.18" stroke="none"></path>
-                  <path :d="grafico.linha" fill="none" stroke="url(#gradSaldo)" stroke-width="2"
+                  <line class="grafico-zero" x1="0" :y1="graficoProj.zeroY" :x2="graficoProj.w"
+                    :y2="graficoProj.zeroY"></line>
+                  <path :d="graficoProj.realArea" fill="url(#gradSaldo)" opacity="0.16" stroke="none"></path>
+                  <path :d="graficoProj.orc" fill="none" class="linha-orcamento" vector-effect="non-scaling-stroke">
+                  </path>
+                  <path :d="graficoProj.real" fill="none" stroke="url(#gradSaldo)" stroke-width="2"
                     vector-effect="non-scaling-stroke"></path>
-                  <line x-show="grafico.hojeX !== null" class="grafico-hoje" :x1="grafico.hojeX" y1="0"
-                    :x2="grafico.hojeX" :y2="grafico.h"></line>
                 </svg>
+                <div class="grafico-legenda">
+                  <span><i class="dot dot-real"></i> ritmo real</span>
+                  <span><i class="dot dot-orc"></i> orçamento recomendado</span>
+                </div>
               </section>
             </template>
 
-            <!-- Mini-painel -->
-            <section class="painel">
-              <div><span>Saldo inicial</span><strong x-text="saldoInicialFmt"></strong></div>
-              <div><span>Saldo final</span><strong x-text="saldoFinalFmt"></strong></div>
+            <!-- Indicadores -->
+            <section class="indicadores">
+              <div><span>Orçamento/dia</span><strong x-text="orcamentoFmt"></strong></div>
+              <div><span>Média/dia</span><strong x-text="mediaFmt"></strong></div>
+              <div><span>Desvio</span><strong :class="{ negativo: desvioRuim }" x-text="desvioTexto"></strong></div>
+              <div><span>Dinheiro acaba</span><strong x-text="dataAcabaFmt"></strong></div>
+              <div><span>Dias até a renda</span><strong x-text="diasAteRendaTexto"></strong></div>
+              <div><span>Folga / déficit</span><strong :class="{ negativo: folgaRuim }" x-text="folgaTexto"></strong>
+              </div>
             </section>
 
-            <!-- Planilha diária -->
-            <div class="tabela-wrap">
-              <table class="planilha">
-                <thead>
-                  <tr>
-                    <th class="c-dia">Dia</th>
-                    <th class="c-data">Data</th>
-                    <th class="c-num">Saída</th>
-                    <th class="c-num">Entrada</th>
-                    <th class="c-num">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template x-for="d in dias" :key="d.data">
-                    <tr :class="{ hoje: ehHoje(d.data) }">
-                      <td class="c-dia" x-text="d.dia"></td>
-                      <td class="c-data" x-text="diaMes(d.data)"></td>
-                      <td class="c-num">
-                        <button type="button" class="celula saida" :class="{ 'tem-valor': celulaTemValor(d, 'saida') }"
-                          @click="abrirDia(d, 'saida')" x-text="celulaFmt(d, 'saida')"></button>
-                      </td>
-                      <td class="c-num">
-                        <button type="button" class="celula entrada"
-                          :class="{ 'tem-valor': celulaTemValor(d, 'entrada') }" @click="abrirDia(d, 'entrada')"
-                          x-text="celulaFmt(d, 'entrada')"></button>
-                      </td>
-                      <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
+            <!-- Projeção dia a dia (verde/vermelho) até a próxima renda -->
+            <template x-if="diasProjecao.length">
+              <div class="tabela-wrap">
+                <table class="planilha">
+                  <thead>
+                    <tr>
+                      <th class="c-data">Dia</th>
+                      <th class="c-num">Saldo projetado</th>
                     </tr>
-                  </template>
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    <template x-for="d in diasProjecao" :key="d.data">
+                      <tr :class="{ hoje: d.hoje }">
+                        <td class="c-data" x-text="d.hoje ? 'Hoje · ' + diaMes(d.data) : diaMes(d.data)"></td>
+                        <td class="c-num saldo" :class="d.status" x-text="fmt(d.saldoCentavos)"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
           </div>
 
           <!-- ============ ABA: EXTRATO ============ -->
@@ -240,7 +250,8 @@
                 <div class="carteira-linha" :class="{ ativa: c.id === store.carteiraAtualId }">
                   <button class="carteira-pick" @click="selecionarCarteira(c.id)">
                     <span class="carteira-linha-nome" x-text="c.nome"></span>
-                    <span class="carteira-linha-vd">Valor diário: <span x-text="fmt(c.valorDiarioCentavos)"></span></span>
+                    <span class="carteira-linha-vd">Próxima renda: <span
+                        x-text="c.proximaRenda ? dataBR(c.proximaRenda) : '—'"></span></span>
                   </button>
                   <button class="icon" @click="abrirEditarCarteira(c)" aria-label="Editar">✎</button>
                 </div>
@@ -262,8 +273,8 @@
               <input type="text" placeholder="ex.: Corrente, Vale-alimentação…" x-model="carteiraForm.nome" />
             </label>
             <label class="campo">
-              <span>Valor diário</span>
-              <input type="text" inputmode="decimal" placeholder="0,00" x-model="carteiraForm.valorDiario" />
+              <span>Próxima renda (quando cai o próximo dinheiro)</span>
+              <input type="date" x-model="carteiraForm.proximaRenda" />
             </label>
             <div class="modal-acoes">
               <template x-if="carteiraForm.modo === 'editar'">

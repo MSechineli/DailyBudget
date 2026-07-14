@@ -1,152 +1,120 @@
-# Domínio — carteiras, valor diário e saldo
+# Domínio — previsão financeira
 
 Fonte de verdade da **regra de negócio**. O `CLAUDE.md` cuida de arquitetura/stack/
-convenções e aponta pra cá. Funções puras e testáveis em `src/data/domain.ts`, com a
-ponte pro `AppData` (por carteira) em `src/data/derive.ts`.
+convenções e aponta pra cá. Matemática pura em `src/data/domain.ts`; a ponte com o
+`AppData` (por carteira, a partir de "hoje") em `src/data/derive.ts`.
 
 ## O que é
 
-App financeiro pessoal com **múltiplas carteiras** (Corrente, Investimento, Vale-
-alimentação…). Cada carteira tem duas visões:
+App pra **prever a situação financeira futura**, não só registrar gastos. Cada carteira
+("conta") tem um **Extrato** (lançamentos) e um **Diário** (painel de previsão que
+recalcula a cada lançamento):
 
-- **Extrato** — lista clássica dos lançamentos (entradas/saídas) do mês, pra adicionar,
-  editar e conferir.
-- **Valor diário** — orçamento diário rolante: a carteira tem um **valor diário**
-  definido **manualmente** pelo usuário; o saldo acumula esse valor por dia e responde
-  "quanto posso gastar hoje / na semana".
+- **Saldo atual** — Σ(entradas − saídas) de tudo com data ≤ hoje.
+- **Orçamento diário recomendado** — `saldo atual ÷ dias até a próxima renda`. Dinâmico:
+  muda a cada gasto/recebimento.
+- **Média diária de gastos** — saídas dos últimos 30 dias ÷ 30 (ritmo real).
+- **Quantos dias o dinheiro dura** — `saldo ÷ média` (no ritmo atual).
+- **Data prevista em que o dinheiro acaba** — hoje + dias que dura.
+- **Folga / déficit** — dias que dura − dias até a renda (positivo = folga; negativo =
+  falta antes da renda).
+- **ISF (Índice de Segurança Financeira)** — pela quantidade de dias que o dinheiro dura.
+- **Projeção verde/vermelho dia a dia** — de hoje até a próxima renda, o saldo caindo:
+  verde enquanto positivo, vermelho quando zeraria.
 
-Cada carteira é **independente**: lançamentos, séries, saldo e rollover são todos por
-carteira. (Sem transferência entre carteiras por enquanto.)
+Objetivo: decidir **antes** de o dinheiro acabar.
 
 ## Vocabulário
 
-- **Carteira** = uma "conta" (`Carteira { id, nome, valorDiarioCentavos }`). O
-  `valorDiarioCentavos` é o valor diário manual (≥ 0) — a base do orçamento.
-- **Entrada** = dinheiro que ENTRA (`tipo: "entrada"`). **Saída** = dinheiro que SAI
-  (`tipo: "saida"`). `valorCentavos` é sempre positivo; o sinal vem do `tipo`.
-- **Lançamento avulso** = de um dia só (`data`), numa carteira (`carteiraId`).
-- **Série recorrente** = repete todo mês numa janela `[mesInicio, mesFim]` (`null` =
-  indefinida), numa carteira. Materializa um lançamento datado em `diaDoMes` (clampado
-  ao tamanho do mês) a cada mês ativo — daí em diante é tratada como um lançamento
-  normal.
-- **Valor diário** = `carteira.valorDiarioCentavos`. **Sobra do mês** (base a acumular)
-  = valor diário × dias do mês.
-- **Saldo inicial (rollover)** = saldo final do mês anterior da carteira, herdado
-  **imediato** no dia 1 do mês seguinte.
-- **Saldo** = saldo do dia. Verde se ≥ 0, vermelho se < 0.
+- **Carteira** (`Carteira { id, nome, proximaRenda }`): uma conta independente. A
+  `proximaRenda` é uma **data informada pelo usuário** (`YYYY-MM-DD` ou `null`) — o
+  horizonte do orçamento e da projeção.
+- **Entrada / Saída**: dinheiro que entra / sai. `valorCentavos` sempre positivo; o
+  sinal vem do `tipo`.
+- **Lançamento avulso** (de um dia) e **série recorrente** (repete todo mês numa janela,
+  materializada num lançamento datado em `diaDoMes`), ambos por carteira.
 
 ## Unidade: centavos inteiros
 
-R$ 19,90 = `1990`. Nunca float. Formata pra R$ só na exibição.
+R$ 19,90 = `1990`. Nunca float. Formata pra R$ só na exibição. Datas são string
+`YYYY-MM-DD` (regra do projeto), nunca `Date`/timestamp de calendário.
 
-## Modelo de cálculo (o coração — `domain.ts`, por carteira)
-
-Três forças montam o saldo de cada dia `d` do mês:
-
-1. **Base diluída** — o valor diário espalhado igual pelos dias:
-   `taxaBase = valorDiário` (que é `sobra / diasNoMes`, com `sobra = valorDiário × dias`).
-2. **Rollover imediato** — o saldo herdado do mês anterior entra **cheio** já no dia 1
-   (offset constante). Positivo = você começa com ele; negativo = começa no vermelho e
-   recupera com o tempo.
-3. **Lançamentos** (avulsos + séries materializadas), por tipo:
-   - **Entrada → diluída**: dividida pelos dias que restam do mês a partir do dia em que
-     ocorreu (inclusive); soma à taxa diária dali pra frente.
-   - **Saída → imediata**: bate o valor **cheio** no dia e permanece descontada.
-
-> As séries entram aqui **materializadas** como um lançamento datado (`diaDoMes`) — uma
-> entrada recorrente dilui, uma saída recorrente bate na hora, igual a um avulso.
-
-### Fórmulas
+## Fórmulas (por carteira, "a partir de hoje")
 
 ```ts
-diasNoMes = new Date(ano, mes, 0).getDate();
-sobra = valorDiarioCentavos * diasNoMes;   // base do mês
-taxaBase = sobra / diasNoMes;              // = valorDiário
-
-// por dia d (1-indexed):
-budgetBruto(d) = saldoInicial
-               + taxaBase · d
-               + Σ, por ENTRADA com diaEntrada ≤ d: (entrada / diasRestantes) · (d − diaEntrada + 1);
-budgetAcum(d)  = round(budgetBruto(d));    // arredonda só aqui (saídas já são inteiras)
-saidasAcum(d)  = Σ saídas com dia ≤ d;
-saldo(d)       = budgetAcum(d) − saidasAcum(d);
-status(d)      = saldo(d) ≥ 0 ? 'verde' : 'vermelho';
-
-taxaDiaria(d)      = taxaBase + Σ (taxaEntrada das entradas com dia ≤ d); // recuperação
-diasNoVermelho(d)  = saldo(d) < 0 && taxaDiaria(d) > 0 ? ceil(−saldo(d) / taxaDiaria(d)) : 0;
+saldoAtual        = Σ(entradas − saídas) com data ≤ hoje;   // inclui séries materializadas
+mediaDiaria       = Σ(saídas em [hoje−29, hoje]) / 30;      // ritmo dos últimos 30 dias
+diasAteRenda      = proximaRenda ? (proximaRenda − hoje em dias) : null;  // null se passou/não há
+orcamentoDiario   = diasAteRenda !== null ? saldoAtual / diasAteRenda : null;
+diasQueDura       = mediaDiaria > 0 ? saldoAtual / mediaDiaria : Infinity;
+dataQueAcaba      = (diasQueDura finito && saldo > 0) ? hoje + ⌊diasQueDura⌋ : null;
+folgaDeficitDias  = (diasAteRenda !== null && diasQueDura finito) ? ⌊diasQueDura⌋ − diasAteRenda : null;
+desvio            = orcamentoDiario !== null ? mediaDiaria − orcamentoDiario : null; // + = gastando acima
 ```
 
-**Fecha exato no último dia:** `saldo(diasNoMes) = saldoInicial + sobra + Σentradas − Σsaídas`.
-`domain.ts` (`calcularMes`) é intocado pela troca do modelo — só muda o que `derive.ts`
-alimenta nele (a base virou o valor diário, e as séries entram materializadas).
+### ISF (Índice de Segurança Financeira)
 
-## Derivações por carteira (`derive.ts`)
+Pela quantidade de dias que o dinheiro dura (`diasQueDura`):
 
-- `valorDiario(dados, carteiraId)` = `carteira.valorDiarioCentavos`.
-- `resumoMesDe(dados, carteiraId, mk)` → `sobra = valorDiário × dias`.
-- `eventosDoMes(dados, carteiraId, mk)` = avulsos da carteira no mês + séries ativas
-  materializadas (datadas em `diaDoMes`). É o input do `calcularMes`.
-- `calcularMesDe` / `agregadoMesDe` / `custoDiarioMedio` — todos recebem `carteiraId`.
-- `itensDoMes(dados, carteiraId, mk)` = a lista do Extrato: avulsos + ocorrências de
-  série, ordenados por data.
+| dias      | nível       |
+|-----------|-------------|
+| 45+       | Excelente   |
+| 30–44     | Seguro      |
+| 20–29     | Atenção     |
+| 10–19     | Crítico     |
+| 0–9       | Emergência  |
 
-### Rollover contínuo (por carteira)
+`Infinity` (sem gastos nos últimos 30 dias) → Excelente.
 
-`saldoInicialMes(dados, carteiraId, mk)` = soma, de cada mês entre a **primeira atividade
-da carteira** (menor `data` de lançamento ou `mesInicio` de série) e o mês anterior a
-`mk`, de `sobra + Σentradas − Σsaídas` daquele mês. Equivale ao saldo do último dia de
-cada mês anterior.
+### Projeção (duas linhas + dia a dia)
 
-> **Nota:** o rollover é ancorado na primeira **atividade** (lançamento/série). Uma
-> carteira só com valor diário e nenhum lançamento não acumula rollover entre meses
-> (cada mês parte do zero e acumula o valor diário dentro dele). O rollover passa a
-> valer a partir do primeiro lançamento/série.
+Do dia 0 (hoje) ao dia `diasAteRenda`:
+
+- **Ritmo real** — `saldo(i) = saldoAtual − mediaDiaria · i`. Verde enquanto ≥ 0,
+  vermelho quando < 0 (é a "data que o dinheiro acaba" no gráfico e a tabela dia a dia).
+- **Orçamento recomendado** — `saldo(i) = saldoAtual − orcamentoDiario · i`, que fecha
+  **exatamente em 0** no dia da renda. É a linha de referência (tracejada) do quanto dá
+  pra gastar por dia pra durar até lá.
+
+Cada valor é arredondado por dia (o ritmo pode ser float).
 
 ## Casos de borda
 
-1. **Mês curto/longo.** `diasNoMes` resolve; array vai só até `diasNoMes`.
-2. **Valor diário 0.** `taxaBase = 0`: sem lançamentos, todo dia fica em 0 (verde). Um
-   gasto fica vermelho e **não recupera** (taxa 0) — `diasNoVermelho = 0`.
-3. **valorCentavos ≤ 0.** Rejeitado na validação; o sinal é o `tipo`.
-4. **Saldo 0.** É **verde** (`≥ 0`).
-5. **Data fora do mês.** Ignorada.
-6. **`deleted: true`.** Ignorado (fica no JSON pro merge futuro).
-7. **"Hoje".** `dia.data === hojeISO()` destaca a linha; fora do mês, "posso gastar hoje"
-   mostra "—".
-8. **Rollover.** `saldoInicial` do mês N = saldo do último dia do mês N-1 (recursivo).
-   Pode ser negativo — entra imediato no dia 1, sem clamping.
-9. **Gasto grande demais.** Fica vermelho e só recupera pelo tempo (taxaBase) ou por uma
-   entrada — não some sozinho.
-10. **Isolamento de carteira.** Lançamentos/séries de uma carteira nunca afetam o saldo
-    de outra.
+1. **Sem próxima renda** (`proximaRenda` null ou já passou): sem orçamento, sem folga,
+   sem projeção (a UI mostra um CTA pra informar a data). Saldo, média, ISF e "dias que
+   dura" ainda funcionam.
+2. **Sem gastos nos últimos 30 dias**: `mediaDiaria = 0` → dura pra sempre → ISF
+   Excelente, sem "data que acaba".
+3. **Saldo negativo**: reflete direto no saldo atual e na projeção (começa no vermelho).
+4. **Lançamentos futuros** (data > hoje): **não** entram no saldo atual (é "o que você
+   tem agora"); aparecem no Extrato do mês deles.
+5. **Isolamento de carteira**: saldo/previsão de uma carteira nunca dependem de outra.
 
-## Exemplo trabalhado (fixture de teste)
+## Exemplo trabalhado
 
-Carteira "Corrente", **valor diário R$ 100,00 = `10000`**, mês de 30 dias → sobra 300000.
-Rollover 0. Avulsos: saída `25000` no dia 1; entrada `15000` no dia 3; saída `5000` no dia 4.
+Carteira com saldo atual `170000` (R$ 1.700), próxima renda em **22 dias**, saídas dos
+últimos 30 dias = `30000` (R$ 300) → média `1000/dia`.
 
-| dia | entradaDia | saidaDia | saldo   | status   |
-|-----|-----------:|---------:|--------:|----------|
-| 1   | 0          | 25000    | −15000  | vermelho |
-| 2   | 0          | 0        | −5000   | vermelho |
-| 3   | 15000      | 0        | 5536    | verde    |
-| 4   | 0          | 5000     | 11071   | verde    |
-| 30  | 0          | 0        | 285000  | verde    |
-
-A saída de R$ 250 no dia 1 bate cheia contra o budget de R$ 100 → −R$ 150; o valor
-diário recupera sozinho (verde no dia 3). A entrada de R$ 150 dilui pelos dias
-restantes. Dia 30 fecha em `300000 + 15000 − 30000 = 285000`.
+- orçamento/dia = `170000 / 22 ≈ 7727` (R$ 77,27).
+- diasQueDura = `170000 / 1000 = 170` → ISF **Excelente**.
+- dataQueAcaba = hoje + 170 dias.
+- folga = `170 − 22 = 148 dias`.
+- desvio = `1000 − 7727 = −6727` → gastando **bem abaixo** do recomendado.
+- projeção: linha real quase plana (dura muito além da renda); linha do orçamento cai
+  de `170000` até `0` no dia 22.
 
 ## Séries recorrentes (semântica)
 
-- Ativa num mês `mk` se `mesInicio ≤ mk ≤ (mesFim ?? ∞)` e mesma `carteiraId`.
-- Materializa um lançamento datado em `min(diaDoMes, diasNoMes)`.
-- **Editar "daqui pra frente" = split**: trunca em `mesAnterior(mk)` e cria uma nova a
-  partir de `mk` (herda `carteiraId`/`diaDoMes`/`mesFim`). Se `mk === mesInicio`, edita
-  em lugar. **Encerrar**: `mk === mesInicio` → exclui; senão → `mesFim = mesAnterior(mk)`.
+- Ativa num mês se `mesInicio ≤ mk ≤ (mesFim ?? ∞)` e mesma `carteiraId`.
+- Materializa um lançamento datado em `min(diaDoMes, diasNoMes)` — conta no saldo/
+  previsão como qualquer lançamento com aquela data.
+- **Editar "daqui pra frente" = split** (trunca a antiga em `mesAnterior(mk)`, cria uma
+  nova de `mk` em diante herdando `carteiraId`/`diaDoMes`/`mesFim`). Se `mk === mesInicio`,
+  edita em lugar. **Encerrar**: `mk === mesInicio` → exclui; senão → `mesFim = mesAnterior(mk)`.
 
 ## Backlog (não implementado)
 
-Transferência entre carteiras; rollover do valor diário sem depender de atividade;
-categorias de gasto + totais; projeção de fim de mês; recorrência com valor variável por
-mês; sync com Google Drive e export `.xlsx`; notificações PWA.
+Renda derivada de uma entrada recorrente (em vez de data manual); incorporar lançamentos
+futuros conhecidos na projeção (degraus, não só linha reta); janela da média
+configurável / ciclo entre rendas; categorias de gasto; transferência entre carteiras;
+sync com Google Drive e export `.xlsx`; notificações PWA de risco.

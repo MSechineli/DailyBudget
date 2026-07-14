@@ -170,6 +170,19 @@ const passos: Record<number, PassoMigracao> = {
       sync: d.sync ?? { driveFileId: null, lastSyncedHash: null },
     };
   },
+
+  // v5 → v6: sai o valor diário manual, entra a previsão. Cada carteira troca
+  // `valorDiarioCentavos` por `proximaRenda: null` (o usuário informa depois).
+  5: (d: any) => ({
+    ...d,
+    version: 6,
+    carteiras: Object.fromEntries(
+      Object.entries(d.carteiras ?? {}).map(([id, c]: [string, any]) => {
+        const { valorDiarioCentavos: _v, ...resto } = c;
+        return [id, { ...resto, proximaRenda: c.proximaRenda ?? null }];
+      }),
+    ),
+  }),
 };
 
 /**

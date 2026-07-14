@@ -118,8 +118,8 @@ export class Store {
     }
   }
 
-  adicionarCarteira(nome: string, valorDiarioCentavos = 0): Carteira {
-    const c = criarCarteira(nome, valorDiarioCentavos);
+  adicionarCarteira(nome: string, proximaRenda: ISODate | null = null): Carteira {
+    const c = criarCarteira(nome, proximaRenda);
     this.dados.carteiras[c.id] = c;
     this.carteiraAtualId = c.id; // já foca na nova
     this.persistir();
@@ -128,14 +128,12 @@ export class Store {
 
   atualizarCarteira(
     id: string,
-    patch: { nome?: string; valorDiarioCentavos?: number },
+    patch: { nome?: string; proximaRenda?: ISODate | null },
   ): void {
     const c = this.dados.carteiras[id];
     if (!c || c.deleted) return;
     if (patch.nome !== undefined) c.nome = patch.nome.trim();
-    if (patch.valorDiarioCentavos !== undefined) {
-      c.valorDiarioCentavos = Math.max(0, Math.round(patch.valorDiarioCentavos));
-    }
+    if (patch.proximaRenda !== undefined) c.proximaRenda = patch.proximaRenda || null;
     c.updatedAt = new Date().toISOString();
     this.persistir();
   }
